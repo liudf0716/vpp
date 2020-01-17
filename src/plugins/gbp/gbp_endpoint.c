@@ -24,13 +24,12 @@
 #include <plugins/gbp/gbp_policy_dpo.h>
 #include <plugins/gbp/gbp_vxlan.h>
 
-#include <vnet/ethernet/arp.h>
 #include <vnet/l2/l2_input.h>
 #include <vnet/l2/l2_output.h>
 #include <vnet/l2/feat_bitmap.h>
 #include <vnet/l2/l2_fib.h>
 #include <vnet/fib/fib_table.h>
-#include <vnet/ip/ip_neighbor.h>
+#include <vnet/ip-neighbor/ip_neighbor.h>
 #include <vnet/fib/fib_walk.h>
 #include <vnet/vxlan-gbp/vxlan_gbp.h>
 
@@ -41,9 +40,10 @@ static const char *gbp_endpoint_attr_names[] = GBP_ENDPOINT_ATTR_NAMES;
  */
 gbp_ep_db_t gbp_ep_db;
 
-fib_node_type_t gbp_endpoint_fib_type;
-
-vlib_log_class_t gbp_ep_logger;
+static fib_source_t gbp_fib_source_hi;
+static fib_source_t gbp_fib_source_low;
+static fib_node_type_t gbp_endpoint_fib_type;
+static vlib_log_class_t gbp_ep_logger;
 
 #define GBP_ENDPOINT_DBG(...)                           \
     vlib_log_debug (gbp_ep_logger, __VA_ARGS__);
@@ -205,12 +205,6 @@ static index_t
 gbp_endpoint_index (const gbp_endpoint_t * ge)
 {
   return (ge - gbp_endpoint_pool);
-}
-
-static ip46_type_t
-ip46_address_get_type (const ip46_address_t * a)
-{
-  return (ip46_address_is_ip4 (a) ? IP46_TYPE_IP4 : IP46_TYPE_IP6);
 }
 
 static int
@@ -588,10 +582,10 @@ gbb_endpoint_fwd_reset (gbp_endpoint_t * ge)
      */
     if (gbp_endpoint_is_remote (ge))
       {
-	fib_table_entry_special_remove (fib_index, pfx, FIB_SOURCE_PLUGIN_HI);
+	fib_table_entry_special_remove (fib_index, pfx, gbp_fib_source_hi);
       }
 
-    fib_table_entry_delete (fib_index, pfx, FIB_SOURCE_PLUGIN_LOW);
+    fib_table_entry_delete (fib_index, pfx, gbp_fib_source_low);
   }
   vec_foreach (ai, gef->gef_adjs)
   {
@@ -726,7 +720,7 @@ gbb_endpoint_fwd_recalc (gbp_endpoint_t * ge)
       }
 
     fib_table_entry_path_add (fib_index, pfx,
-			      FIB_SOURCE_PLUGIN_LOW,
+			      gbp_fib_source_low,
 			      FIB_ENTRY_FLAG_NONE,
 			      fib_proto_to_dpo (pfx->fp_proto),
 			      &pfx->fp_addr, ip_sw_if_index,
@@ -759,7 +753,7 @@ gbb_endpoint_fwd_recalc (gbp_endpoint_t * ge)
 					gg->gg_sclass, ~0, &policy_dpo);
 
 	    fib_table_entry_special_dpo_add (fib_index, pfx,
-					     FIB_SOURCE_PLUGIN_HI,
+					     gbp_fib_source_hi,
 					     FIB_ENTRY_FLAG_INTERPOSE,
 					     &policy_dpo);
 	    dpo_reset (&policy_dpo);
@@ -774,14 +768,11 @@ gbb_endpoint_fwd_recalc (gbp_endpoint_t * ge)
 	  {
 	    gbp_endpoint_add_itf (gbp_itf_get_sw_if_index (gef->gef_itf),
 				  gei);
-	    if (FIB_PROTOCOL_IP4 == pfx->fp_proto)
-	      send_ip4_garp_w_addr (vlib_get_main (),
-				    &pfx->fp_addr.ip4,
-				    gg->gg_uplink_sw_if_index);
-	    else
-	      send_ip6_na_w_addr (vlib_get_main (),
-				  &pfx->fp_addr.ip6,
-				  gg->gg_uplink_sw_if_index);
+	    ip_neighbor_advertise (vlib_get_main (),
+				   (FIB_PROTOCOL_IP4 == pfx->fp_proto ?
+				    IP46_TYPE_IP4 :
+				    IP46_TYPE_IP6),
+				   &pfx->fp_addr, gg->gg_uplink_sw_if_index);
 	  }
       }
   }
@@ -1267,8 +1258,8 @@ gbp_endpoint_show_one (index_t gei, void *ctx)
   return (WALK_CONTINUE);
 }
 
-static void
-gbp_endpoint_walk_ip_itf (const clib_bihash_kv_24_8_t * kvp, void *arg)
+static int
+gbp_endpoint_walk_ip_itf (clib_bihash_kv_24_8_t * kvp, void *arg)
 {
   ip46_address_t ip;
   vlib_main_t *vm;
@@ -1282,10 +1273,11 @@ gbp_endpoint_walk_ip_itf (const clib_bihash_kv_24_8_t * kvp, void *arg)
 		   format_ip46_address, &ip, IP46_TYPE_ANY,
 		   format_vnet_sw_if_index_name, vnet_get_main (),
 		   sw_if_index, kvp->value);
+  return (BIHASH_WALK_CONTINUE);
 }
 
-static void
-gbp_endpoint_walk_mac_itf (const clib_bihash_kv_16_8_t * kvp, void *arg)
+static int
+gbp_endpoint_walk_mac_itf (clib_bihash_kv_16_8_t * kvp, void *arg)
 {
   mac_address_t mac;
   vlib_main_t *vm;
@@ -1299,6 +1291,7 @@ gbp_endpoint_walk_mac_itf (const clib_bihash_kv_16_8_t * kvp, void *arg)
 		   format_mac_address_t, &mac,
 		   format_vnet_sw_if_index_name, vnet_get_main (),
 		   sw_if_index, kvp->value);
+  return (BIHASH_WALK_CONTINUE);
 }
 
 static clib_error_t *
@@ -1576,6 +1569,12 @@ gbp_endpoint_init (vlib_main_t * vm)
 
   gbp_ep_logger = vlib_log_register_class ("gbp", "ep");
   gbp_endpoint_fib_type = fib_node_register_new_type (&gbp_endpoint_vft);
+  gbp_fib_source_hi = fib_source_allocate ("gbp-endpoint-hi",
+					   FIB_SOURCE_PRIORITY_HI,
+					   FIB_SOURCE_BH_SIMPLE);
+  gbp_fib_source_low = fib_source_allocate ("gbp-endpoint-low",
+					    FIB_SOURCE_PRIORITY_LOW,
+					    FIB_SOURCE_BH_SIMPLE);
 
   return (NULL);
 }

@@ -257,7 +257,18 @@ typedef struct
   u32 input_next_mpls;
 } next_by_ethertype_t;
 
+struct ethernet_main_t_;
+
+typedef void (ethernet_address_change_function_t)
+  (struct ethernet_main_t_ * im, u32 sw_if_index, uword opaque);
+
 typedef struct
+{
+  ethernet_address_change_function_t *function;
+  uword function_opaque;
+} ethernet_address_change_ctx_t;
+
+typedef struct ethernet_main_t_
 {
   vlib_main_t *vlib_main;
 
@@ -300,6 +311,10 @@ typedef struct
 
   /* Allocated loopback instances */
   uword *bm_loopback_instances;
+
+  /** Functions to call when interface hw address changes. */
+  ethernet_address_change_ctx_t *address_change_callbacks;
+
 } ethernet_main_t;
 
 extern ethernet_main_t ethernet_main;
@@ -445,6 +460,9 @@ clib_error_t *next_by_ethertype_register (next_by_ethertype_t * l3_next,
 int vnet_create_loopback_interface (u32 * sw_if_indexp, u8 * mac_address,
 				    u8 is_specified, u32 user_instance);
 int vnet_delete_loopback_interface (u32 sw_if_index);
+int vnet_create_sub_interface (u32 sw_if_index, u32 id,
+			       u32 flags, u16 inner_vlan_id,
+			       u16 outer_vlan_id, u32 * sub_sw_if_index);
 int vnet_delete_sub_interface (u32 sw_if_index);
 
 // Perform ethernet subinterface classification table lookups given
@@ -549,8 +567,6 @@ void ethernet_update_adjacency (vnet_main_t * vnm, u32 sw_if_index, u32 ai);
 u8 *ethernet_build_rewrite (vnet_main_t * vnm,
 			    u32 sw_if_index,
 			    vnet_link_t link_type, const void *dst_address);
-const u8 *ethernet_ip4_mcast_dst_addr (void);
-const u8 *ethernet_ip6_mcast_dst_addr (void);
 void ethernet_input_init (vlib_main_t * vm, ethernet_main_t * em);
 
 extern vlib_node_registration_t ethernet_input_node;

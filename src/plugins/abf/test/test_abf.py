@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 from socket import inet_pton, inet_ntop, AF_INET, AF_INET6
 import unittest
@@ -141,7 +141,6 @@ class TestAbf(VppTestCase):
         for i in self.pg_interfaces:
             i.unconfig_ip4()
             i.unconfig_ip6()
-            i.ip6_disable()
             i.admin_down()
         super(TestAbf, self).tearDown()
 
@@ -197,7 +196,7 @@ class TestAbf(VppTestCase):
                      dst=self.pg0.local_mac) /
                IP(src="1.1.1.1", dst="1.1.1.2") /
                UDP(sport=1234, dport=1234) /
-               Raw('\xa5' * 100))
+               Raw(b'\xa5' * 100))
         self.send_and_expect(self.pg0, p_1*NUM_PKTS, self.pg1)
 
         #
@@ -240,7 +239,7 @@ class TestAbf(VppTestCase):
                      dst=self.pg1.local_mac) /
                IP(src="1.1.1.1", dst="1.1.1.2") /
                UDP(sport=1234, dport=1234) /
-               Raw('\xa5' * 100))
+               Raw(b'\xa5' * 100))
         self.send_and_expect(self.pg1, p_2 * NUM_PKTS, self.pg3)
 
         #
@@ -318,7 +317,7 @@ class TestAbf(VppTestCase):
                    dst=self.pg0.local_mac) /
              IPv6(src="2001::2", dst="2001::1") /
              UDP(sport=1234, dport=1234) /
-             Raw('\xa5' * 100))
+             Raw(b'\xa5' * 100))
 
         #
         # packets are dropped because there is no route to the policy's

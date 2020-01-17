@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """ 6RD RFC5969 functional tests """
 
 import unittest
@@ -56,6 +56,7 @@ class Test6RD(VppTestCase):
             i.unconfig_ip6()
             i.set_table_ip4(0)
             i.set_table_ip6(0)
+            i.admin_down()
         super(Test6RD, self).tearDown()
 
     def validate_6in4(self, rx, expected):

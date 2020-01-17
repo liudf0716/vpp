@@ -150,7 +150,8 @@ app_worker_alloc_session_fifos (segment_manager_t * sm, session_t * s)
   svm_fifo_t *rx_fifo = 0, *tx_fifo = 0;
   int rv;
 
-  if ((rv = segment_manager_alloc_session_fifos (sm, &rx_fifo, &tx_fifo)))
+  if ((rv = segment_manager_alloc_session_fifos (sm, s->thread_index,
+						 &rx_fifo, &tx_fifo)))
     return rv;
 
   rx_fifo->master_session_index = s->session_index;
@@ -525,7 +526,8 @@ int
 app_worker_add_segment_notify (app_worker_t * app_wrk, u64 segment_handle)
 {
   application_t *app = application_get (app_wrk->app_index);
-  return app->cb_fns.add_segment_callback (app_wrk->api_client_index,
+
+  return app->cb_fns.add_segment_callback (app_wrk->wrk_index,
 					   segment_handle);
 }
 
@@ -533,7 +535,7 @@ int
 app_worker_del_segment_notify (app_worker_t * app_wrk, u64 segment_handle)
 {
   application_t *app = application_get (app_wrk->app_index);
-  return app->cb_fns.del_segment_callback (app_wrk->api_client_index,
+  return app->cb_fns.del_segment_callback (app_wrk->wrk_index,
 					   segment_handle);
 }
 

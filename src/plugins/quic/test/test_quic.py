@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """ Vpp QUIC tests """
 
 import unittest
@@ -14,10 +14,17 @@ class QUICAppWorker(Worker):
     """ QUIC Test Application Worker """
     process = None
 
-    def __init__(self, build_dir, appname, args, logger, env={}):
+    def __init__(self, build_dir, appname, executable_args, logger, role,
+                 testcase, env=None, *args, **kwargs):
+        if env is None:
+            env = {}
         app = "%s/vpp/bin/%s" % (build_dir, appname)
-        self.args = [app] + args
-        super(QUICAppWorker, self).__init__(self.args, logger, env)
+        self.args = [app] + executable_args
+        self.role = role
+        self.wait_for_gdb = 'wait-for-gdb'
+        self.testcase = testcase
+        super(QUICAppWorker, self).__init__(self.args, logger, env,
+                                            *args, **kwargs)
 
     def run(self):
         super(QUICAppWorker, self).run()
@@ -37,6 +44,11 @@ class QUICAppWorker(Worker):
 
 class QUICTestCase(VppTestCase):
     """ QUIC Test Case """
+
+    timeout = 20
+    pre_test_sleep = 0.3
+    post_test_sleep = 0.2
+
     @classmethod
     def setUpClass(cls):
         cls.extra_vpp_plugin_config.append("plugin quic_plugin.so { enable }")
@@ -49,10 +61,7 @@ class QUICTestCase(VppTestCase):
         if self.build_dir is None:
             raise Exception("Environment variable `%s' not set" % var)
         self.vppDebug = 'vpp_debug' in self.build_dir
-        self.timeout = 20
         self.vapi.session_enable_disable(is_enabled=1)
-        self.pre_test_sleep = 0.3
-        self.post_test_sleep = 0.2
 
         self.create_loopback_interfaces(2)
         self.uri = "quic://%s/1234" % self.loop0.local_ip4
@@ -102,11 +111,12 @@ class QUICTestCase(VppTestCase):
 
 class QUICEchoIntTestCase(QUICTestCase):
     """QUIC Echo Internal Test Case"""
+    test_bytes = ' test-bytes'
 
     def setUp(self):
         super(QUICEchoIntTestCase, self).setUp()
-        self.client_args = "uri %s fifo-size 64 test-bytes appns client" \
-            % self.uri
+        self.client_args = 'uri {uri} fifo-size 64{testbytes} appns client' \
+            .format(uri=self.uri, testbytes=self.test_bytes)
         self.server_args = "uri %s fifo-size 64 appns server" % self.uri
 
     def server(self, *args):
@@ -133,6 +143,16 @@ class QUICEchoIntTransferTestCase(QUICEchoIntTestCase):
         self.client("no-output", "mbytes", "2")
 
 
+class QUICEchoIntTransferBigTestCase(QUICEchoIntTestCase):
+    """QUIC Echo Internal Transfer Big Test Case"""
+    test_bytes = ''
+
+    @unittest.skipUnless(running_extended_tests, "part of extended tests")
+    def test_quic_int_transfer_big(self):
+        self.server()
+        self.client("no-output", "gbytes", "10")
+
+
 class QUICEchoIntSerialTestCase(QUICEchoIntTestCase):
     """QUIC Echo Internal Serial Transfer Test Case"""
     def test_quic_serial_int_transfer(self):
@@ -144,6 +164,19 @@ class QUICEchoIntSerialTestCase(QUICEchoIntTestCase):
         self.client("no-output", "mbytes", "2")
 
 
+class QUICEchoIntSerialBigTestCase(QUICEchoIntTestCase):
+    """QUIC Echo Internal Serial Transfer Big Test Case"""
+
+    @unittest.skipUnless(running_extended_tests, "part of extended tests")
+    def test_quic_serial_int_transfer_big(self):
+        self.server()
+        self.client("no-output", "gbytes", "5")
+        self.client("no-output", "gbytes", "5")
+        self.client("no-output", "gbytes", "5")
+        self.client("no-output", "gbytes", "5")
+        self.client("no-output", "gbytes", "5")
+
+
 class QUICEchoIntMStreamTestCase(QUICEchoIntTestCase):
     """QUIC Echo Internal MultiStream Test Case"""
     def test_quic_int_multistream_transfer(self):
@@ -151,9 +184,20 @@ class QUICEchoIntMStreamTestCase(QUICEchoIntTestCase):
         self.client("nclients", "10", "mbytes", "1", "no-output")
 
 
+class QUICEchoIntMStreamBigTestCase(QUICEchoIntTestCase):
+    """QUIC Echo Internal MultiStream Big Test Case"""
+
+    @unittest.skipUnless(running_extended_tests, "part of extended tests")
+    def test_quic_int_multistream_transfer(self):
+        self.server()
+        self.client("nclients", "10", "gbytes", "5", "no-output")
+
+
 class QUICEchoExtTestCase(QUICTestCase):
     extra_vpp_punt_config = ["session", "{", "evt_qs_memfd_seg", "}"]
     quic_setup = "default"
+    test_bytes = "test-bytes:assert"
+    app = "vpp_echo"
 
     def setUp(self):
         super(QUICEchoExtTestCase, self).setUp()
@@ -161,37 +205,43 @@ class QUICEchoExtTestCase(QUICTestCase):
             "uri",
             self.uri,
             "json",
-            "fifo-size",
-            "64",
-            "test-bytes:assert",
-            "socket-name",
-            self.api_sock]
+            self.test_bytes,
+            "socket-name", self.api_sock,
+            "quic-setup", self.quic_setup]
         self.server_echo_test_args = common_args + \
-            ["server", "appns", "server", "quic-setup", self.quic_setup]
+            ["server", "appns", "server"]  # use default fifo-size
         self.client_echo_test_args = common_args + \
-            ["client", "appns", "client", "quic-setup", self.quic_setup]
+            ["client", "appns", "client", "fifo-size", "4M"]
+        error = self.vapi.cli("quic set fifo-size 2M")
+        if error:
+            self.logger.critical(error)
+            self.assertNotIn("failed", error)
 
     def server(self, *args):
         _args = self.server_echo_test_args + list(args)
         self.worker_server = QUICAppWorker(
             self.build_dir,
-            "vpp_echo",
+            self.app,
             _args,
-            self.logger)
+            self.logger,
+            'server',
+            self)
         self.worker_server.start()
         self.sleep(self.pre_test_sleep)
 
     def client(self, *args):
         _args = self.client_echo_test_args + list(args)
-        # self.client_echo_test_args += "use-svm-api"
         self.worker_client = QUICAppWorker(
             self.build_dir,
-            "vpp_echo",
+            self.app,
             _args,
-            self.logger)
+            self.logger,
+            'client',
+            self)
         self.worker_client.start()
-        self.worker_client.join(self.timeout)
-        self.worker_server.join(self.timeout)
+        timeout = None if self.debug_all else self.timeout
+        self.worker_client.join(timeout)
+        self.worker_server.join(timeout)
         self.sleep(self.post_test_sleep)
 
     def validate_ext_test_results(self):
@@ -220,9 +270,23 @@ class QUICEchoExtTestCase(QUICTestCase):
 
 class QUICEchoExtTransferTestCase(QUICEchoExtTestCase):
     """QUIC Echo External Transfer Test Case"""
+    timeout = 60
+
     def test_quic_ext_transfer(self):
         self.server()
         self.client()
+        self.validate_ext_test_results()
+
+
+class QUICEchoExtTransferBigTestCase(QUICEchoExtTestCase):
+    """QUIC Echo External Transfer Big Test Case"""
+    test_bytes = ''
+    timeout = 60
+
+    @unittest.skipUnless(running_extended_tests, "part of extended tests")
+    def test_quic_ext_transfer_big(self):
+        self.server("TX=0", "RX=10Gb")
+        self.client("TX=10Gb", "RX=0")
         self.validate_ext_test_results()
 
 
@@ -318,6 +382,18 @@ class QUICEchoExtServerStreamTestCase(QUICEchoExtTestCase):
     def test_quic_ext_transfer_server_stream(self):
         self.server("TX=10Mb", "RX=0")
         self.client("TX=0", "RX=10Mb")
+        self.validate_ext_test_results()
+
+
+class QUICEchoExtBigServerStreamTestCase(QUICEchoExtTestCase):
+    """QUIC Echo External Transfer Big Server Stream Test Case"""
+    quic_setup = "serverstream"
+    test_bytes = ''
+
+    @unittest.skipUnless(running_extended_tests, "part of extended tests")
+    def test_quic_ext_transfer_big_server_stream(self):
+        self.server("TX=10Gb", "RX=0")
+        self.client("TX=0", "RX=10Gb")
         self.validate_ext_test_results()
 
 
@@ -420,8 +496,8 @@ class QUICEchoExtServerStreamWorkersTestCase(QUICEchoExtTestCase):
 
     @unittest.skipUnless(running_extended_tests, "part of extended tests")
     def test_quic_ext_transfer_server_stream_multi_workers(self):
-        self.server("nclients", "4/4", "TX=10Mb", "RX=0")
-        self.client("nclients", "4/4", "TX=0", "RX=10Mb")
+        self.server("nclients", "4", "quic-streams", "4", "TX=10Mb", "RX=0")
+        self.client("nclients", "4", "quic-streams", "4", "TX=0", "RX=10Mb")
         self.validate_ext_test_results()
 
 

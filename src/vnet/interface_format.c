@@ -41,6 +41,42 @@
 #include <vppinfra/bitmap.h>
 #include <vnet/l2/l2_input.h>
 #include <vnet/l2/l2_output.h>
+#include <vnet/l2/l2_vtr.h>
+
+u8 *
+format_vtr (u8 * s, va_list * args)
+{
+  u32 vtr_op = va_arg (*args, u32);
+  u32 dot1q = va_arg (*args, u32);
+  u32 tag1 = va_arg (*args, u32);
+  u32 tag2 = va_arg (*args, u32);
+  switch (vtr_op)
+    {
+    case L2_VTR_DISABLED:
+      return format (s, "none");
+    case L2_VTR_PUSH_1:
+      return format (s, "push-1 %s %d", dot1q ? "dot1q" : "dot1ad", tag1);
+    case L2_VTR_PUSH_2:
+      return format (s, "push-2 %s %d %d", dot1q ? "dot1q" : "dot1ad", tag1,
+		     tag2);
+    case L2_VTR_POP_1:
+      return format (s, "pop-1");
+    case L2_VTR_POP_2:
+      return format (s, "pop-2");
+    case L2_VTR_TRANSLATE_1_1:
+      return format (s, "trans-1-1 %s %d", dot1q ? "dot1q" : "dot1ad", tag1);
+    case L2_VTR_TRANSLATE_1_2:
+      return format (s, "trans-1-2 %s %d %d", dot1q ? "dot1q" : "dot1ad",
+		     tag1, tag2);
+    case L2_VTR_TRANSLATE_2_1:
+      return format (s, "trans-2-1 %s %d", dot1q ? "dot1q" : "dot1ad", tag1);
+    case L2_VTR_TRANSLATE_2_2:
+      return format (s, "trans-2-2 %s %d %d", dot1q ? "dot1q" : "dot1ad",
+		     tag1, tag2);
+    default:
+      return format (s, "none");
+    }
+}
 
 u8 *
 format_vnet_sw_interface_flags (u8 * s, va_list * args)
@@ -444,6 +480,17 @@ format_vnet_buffer_opaque (u8 * s, va_list * args)
 	      "ip.reass.next_index: %d, ip.reass.estimated_mtu: %d",
 	      o->ip.reass.next_index, (u32) (o->ip.reass.estimated_mtu));
   vec_add1 (s, '\n');
+  s = format (s,
+	      "ip.reass.error_next_index: %d, ip.reass.owner_thread_index: %d",
+	      o->ip.reass.error_next_index,
+	      (u32) (o->ip.reass.owner_thread_index));
+  vec_add1 (s, '\n');
+  s = format (s,
+	      "ip.reass.ip_proto: %d, ip.reass.l4_src_port: %d",
+	      o->ip.reass.ip_proto, (u32) (o->ip.reass.l4_src_port));
+  vec_add1 (s, '\n');
+  s = format (s, "ip.reass.l4_dst_port: %d", o->ip.reass.l4_dst_port);
+  vec_add1 (s, '\n');
 
   s = format (s,
 	      "ip.reass.fragment_first: %d ip.reass.fragment_last: %d",
@@ -469,13 +516,15 @@ format_vnet_buffer_opaque (u8 * s, va_list * args)
 	      (u32) (o->mpls.ttl), (u32) (o->mpls.exp), (u32) (o->mpls.first),
 	      o->mpls.save_rewrite_length, (u32) (o->mpls.bier.n_bytes));
   vec_add1 (s, '\n');
+  s = format (s, "mpls.mpls_hdr_length: %d", (u32) (o->mpls.mpls_hdr_length));
+  vec_add1 (s, '\n');
 
   s = format (s,
-	      "l2.feature_bitmap: %08x, l2.bd_index: %d, l2.l2_len: %d, "
-	      "l2.shg: %d, l2.l2fib_sn: %d, l2.bd_age: %d",
-	      o->l2.feature_bitmap, (u32) (o->l2.bd_index),
-	      (u32) (o->l2.l2_len), (u32) (o->l2.shg), (u32) (o->l2.l2fib_sn),
-	      (u32) (o->l2.bd_age));
+	      "l2.feature_bitmap: %08x, l2.bd_index: %d, l2.l2fib_sn %d, "
+	      "l2.l2_len: %d, l2.shg: %d, l2.bd_age: %d",
+	      (u32) (o->l2.feature_bitmap), (u32) (o->l2.bd_index),
+	      (u32) (o->l2.l2fib_sn),
+	      (u32) (o->l2.l2_len), (u32) (o->l2.shg), (u32) (o->l2.bd_age));
   vec_add1 (s, '\n');
 
   s = format (s,
@@ -499,18 +548,24 @@ format_vnet_buffer_opaque (u8 * s, va_list * args)
   s = format (s, "policer.index: %d", o->policer.index);
   vec_add1 (s, '\n');
 
-  s = format (s, "ipsec.sad_index: %d", o->ipsec.sad_index);
+  s = format (s, "ipsec.sad_index: %d, ipsec.protect_index",
+	      o->ipsec.sad_index, o->ipsec.protect_index);
   vec_add1 (s, '\n');
 
   s = format (s, "map.mtu: %d", (u32) (o->map.mtu));
   vec_add1 (s, '\n');
 
   s = format (s,
-	      "map_t.v6.saddr: 0x%x, map_t.v6.daddr: 0x%x, "
-	      "map_t.v6.frag_offset: %d, map_t.v6.l4_offset: %d",
+	      "map_t.map_domain_index: %d, map_t.v6.saddr: 0x%x, "
+	      "map_t.v6.daddr: 0x%x, map_t.v6.frag_offset: %d, "
+	      "map_t.v6.l4_offset: %d, map_t.v6.l4_protocol: %d, "
+	      "map.t.checksum_offset: %d",
+	      o->map_t.map_domain_index,
 	      o->map_t.v6.saddr,
 	      o->map_t.v6.daddr,
-	      (u32) (o->map_t.v6.frag_offset), (u32) (o->map_t.v6.l4_offset));
+	      (u32) (o->map_t.v6.frag_offset), (u32) (o->map_t.v6.l4_offset),
+	      (u32) (o->map_t.v6.l4_protocol),
+	      (u32) (o->map_t.checksum_offset));
   vec_add1 (s, '\n');
 
   s = format (s,
@@ -533,12 +588,11 @@ format_vnet_buffer_opaque (u8 * s, va_list * args)
   vec_add1 (s, '\n');
 
   s = format
-    (s, "tcp.connection_index: %d, tcp.seq_number: %d, tcp.seq_end: %d, "
-     "tcp.ack_number: %d, tcp.hdr_offset: %d, tcp.data_offset: %d",
-     o->tcp.connection_index,
-     o->tcp.seq_number,
-     o->tcp.seq_end,
-     o->tcp.ack_number,
+    (s,
+     "tcp.connection_index: %d, tcp.seq_number: %d, tcp.next_node_opaque: %d "
+     "tcp.seq_end: %d, tcp.ack_number: %d, tcp.hdr_offset: %d, "
+     "tcp.data_offset: %d", o->tcp.connection_index, o->tcp.next_node_opaque,
+     o->tcp.seq_number, o->tcp.seq_end, o->tcp.ack_number,
      (u32) (o->tcp.hdr_offset), (u32) (o->tcp.data_offset));
   vec_add1 (s, '\n');
 
@@ -583,6 +637,10 @@ format_vnet_buffer_opaque2 (u8 * s, va_list * args)
 
   s = format (s, "gbp.flags: %x, gbp.sclass: %d",
 	      (u32) (o->gbp.flags), (u32) (o->gbp.sclass));
+  vec_add1 (s, '\n');
+
+  s = format (s, "gso_size: %d, gso_l4_hdr_sz: %d",
+	      (u32) (o->gso_size), (u32) (o->gso_l4_hdr_sz));
   vec_add1 (s, '\n');
 
   s = format (s, "pg_replay_timestamp: %llu", (u32) (o->pg_replay_timestamp));

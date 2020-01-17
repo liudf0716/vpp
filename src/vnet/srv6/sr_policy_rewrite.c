@@ -107,6 +107,7 @@ static dpo_type_t sr_pr_bsid_insert_dpo_type;
  * @brief IPv6 SA for encapsulated packets
  */
 static ip6_address_t sr_pr_encaps_src;
+static u8 sr_pr_encaps_hop_limit = IPv6_DEFAULT_HOP_LIMIT;
 
 /******************* SR rewrite set encaps IPv6 source addr *******************/
 /* Note:  This is temporal. We don't know whether to follow this path or
@@ -138,6 +139,44 @@ VLIB_CLI_COMMAND (set_sr_src_command, static) = {
   .path = "set sr encaps source",
   .short_help = "set sr encaps source addr <ip6_addr>",
   .function = set_sr_src_command_fn,
+};
+/* *INDENT-ON* */
+
+/******************** SR rewrite set encaps IPv6 hop-limit ********************/
+
+void
+sr_set_hop_limit (u8 hop_limit)
+{
+  sr_pr_encaps_hop_limit = hop_limit;
+}
+
+u8
+sr_get_hop_limit (void)
+{
+  return sr_pr_encaps_hop_limit;
+}
+
+static clib_error_t *
+set_sr_hop_limit_command_fn (vlib_main_t * vm, unformat_input_t * input,
+			     vlib_cli_command_t * cmd)
+{
+  int hop_limit = sr_get_hop_limit ();
+
+  if (unformat_check_input (input) == UNFORMAT_END_OF_INPUT)
+    return clib_error_return (0, "No value specified");
+  if (!unformat (input, "%d", &hop_limit))
+    return clib_error_return (0, "Invalid value");
+  if (hop_limit <= 0 || hop_limit > 255)
+    return clib_error_return (0, "Value out of range [1-255]");
+  sr_pr_encaps_hop_limit = (u8) hop_limit;
+  return 0;
+}
+
+/* *INDENT-OFF* */
+VLIB_CLI_COMMAND (set_sr_hop_limit_command, static) = {
+  .path = "set sr encaps hop-limit",
+  .short_help = "set sr encaps hop-limit <value>",
+  .function = set_sr_hop_limit_command_fn,
 };
 /* *INDENT-ON* */
 
@@ -175,7 +214,7 @@ compute_rewrite_encaps (ip6_address_t * sl)
   iph->src_address.as_u64[1] = sr_pr_encaps_src.as_u64[1];
   iph->payload_length = header_length - IPv6_DEFAULT_HEADER_LENGTH;
   iph->protocol = IP_PROTOCOL_IPV6;
-  iph->hop_limit = IPv6_DEFAULT_HOP_LIMIT;
+  iph->hop_limit = sr_pr_encaps_hop_limit;
 
   if (vec_len (sl) > 1)
     {
@@ -301,6 +340,7 @@ create_sl (ip6_sr_policy_t * sr_policy, ip6_address_t * sl, u32 weight,
 {
   ip6_sr_main_t *sm = &sr_main;
   ip6_sr_sl_t *segment_list;
+  sr_policy_fn_registration_t *plugin = 0;
 
   pool_get (sm->sid_lists, segment_list);
   clib_memset (segment_list, 0, sizeof (*segment_list));
@@ -310,6 +350,7 @@ create_sl (ip6_sr_policy_t * sr_policy, ip6_address_t * sl, u32 weight,
   /* Fill in segment list */
   segment_list->weight =
     (weight != (u32) ~ 0 ? weight : SR_SEGMENT_LIST_WEIGHT_DEFAULT);
+
   segment_list->segments = vec_dup (sl);
 
   if (is_encap)
@@ -323,6 +364,18 @@ create_sl (ip6_sr_policy_t * sr_policy, ip6_address_t * sl, u32 weight,
       segment_list->rewrite_bsid = compute_rewrite_bsid (sl);
     }
 
+  if (sr_policy->plugin)
+    {
+      plugin =
+	pool_elt_at_index (sm->policy_plugin_functions,
+			   sr_policy->plugin - SR_BEHAVIOR_LAST);
+
+      segment_list->plugin = sr_policy->plugin;
+      segment_list->plugin_mem = sr_policy->plugin_mem;
+
+      plugin->creation (sr_policy);
+    }
+
   /* Create DPO */
   dpo_reset (&segment_list->bsid_dpo);
   dpo_reset (&segment_list->ip6_dpo);
@@ -330,19 +383,41 @@ create_sl (ip6_sr_policy_t * sr_policy, ip6_address_t * sl, u32 weight,
 
   if (is_encap)
     {
-      dpo_set (&segment_list->ip6_dpo, sr_pr_encaps_dpo_type, DPO_PROTO_IP6,
-	       segment_list - sm->sid_lists);
-      dpo_set (&segment_list->ip4_dpo, sr_pr_encaps_dpo_type, DPO_PROTO_IP4,
-	       segment_list - sm->sid_lists);
-      dpo_set (&segment_list->bsid_dpo, sr_pr_bsid_encaps_dpo_type,
-	       DPO_PROTO_IP6, segment_list - sm->sid_lists);
+      if (!sr_policy->plugin)
+	{
+	  dpo_set (&segment_list->ip6_dpo, sr_pr_encaps_dpo_type,
+		   DPO_PROTO_IP6, segment_list - sm->sid_lists);
+	  dpo_set (&segment_list->ip4_dpo, sr_pr_encaps_dpo_type,
+		   DPO_PROTO_IP4, segment_list - sm->sid_lists);
+	  dpo_set (&segment_list->bsid_dpo, sr_pr_bsid_encaps_dpo_type,
+		   DPO_PROTO_IP6, segment_list - sm->sid_lists);
+	}
+      else
+	{
+	  dpo_set (&segment_list->ip6_dpo, plugin->dpo, DPO_PROTO_IP6,
+		   segment_list - sm->sid_lists);
+	  dpo_set (&segment_list->ip4_dpo, plugin->dpo, DPO_PROTO_IP4,
+		   segment_list - sm->sid_lists);
+	  dpo_set (&segment_list->bsid_dpo, plugin->dpo, DPO_PROTO_IP6,
+		   segment_list - sm->sid_lists);
+	}
     }
   else
     {
-      dpo_set (&segment_list->ip6_dpo, sr_pr_insert_dpo_type, DPO_PROTO_IP6,
-	       segment_list - sm->sid_lists);
-      dpo_set (&segment_list->bsid_dpo, sr_pr_bsid_insert_dpo_type,
-	       DPO_PROTO_IP6, segment_list - sm->sid_lists);
+      if (!sr_policy->plugin)
+	{
+	  dpo_set (&segment_list->ip6_dpo, sr_pr_insert_dpo_type,
+		   DPO_PROTO_IP6, segment_list - sm->sid_lists);
+	  dpo_set (&segment_list->bsid_dpo, sr_pr_bsid_insert_dpo_type,
+		   DPO_PROTO_IP6, segment_list - sm->sid_lists);
+	}
+      else
+	{
+	  dpo_set (&segment_list->ip6_dpo, plugin->dpo, DPO_PROTO_IP6,
+		   segment_list - sm->sid_lists);
+	  dpo_set (&segment_list->bsid_dpo, plugin->dpo, DPO_PROTO_IP6,
+		   segment_list - sm->sid_lists);
+	}
     }
 
   return segment_list;
@@ -415,7 +490,6 @@ update_lb (ip6_sr_policy_t * sr_policy)
     }
 
   /* Create the LB path vector */
-  //path_vector = vec_new(load_balance_path_t, vec_len(sr_policy->segments_lists));
   vec_foreach (sl_index, sr_policy->segments_lists)
   {
     segment_list = pool_elt_at_index (sm->sid_lists, *sl_index);
@@ -444,7 +518,6 @@ update_lb (ip6_sr_policy_t * sr_policy)
   vec_free (b_path_vector);
   vec_free (ip6_path_vector);
   vec_free (ip4_path_vector);
-
 }
 
 /**
@@ -551,7 +624,8 @@ update_replicate (ip6_sr_policy_t * sr_policy)
  */
 int
 sr_policy_add (ip6_address_t * bsid, ip6_address_t * segments,
-	       u32 weight, u8 behavior, u32 fib_table, u8 is_encap)
+	       u32 weight, u8 behavior, u32 fib_table, u8 is_encap,
+	       u16 plugin, void *ls_plugin_mem)
 {
   ip6_sr_main_t *sm = &sr_main;
   ip6_sr_policy_t *sr_policy = 0;
@@ -595,6 +669,12 @@ sr_policy_add (ip6_address_t * bsid, ip6_address_t * segments,
   sr_policy->type = behavior;
   sr_policy->fib_table = (fib_table != (u32) ~ 0 ? fib_table : 0);	//Is default FIB 0 ?
   sr_policy->is_encap = is_encap;
+
+  if (plugin)
+    {
+      sr_policy->plugin = plugin;
+      sr_policy->plugin_mem = ls_plugin_mem;
+    }
 
   /* Copy the key */
   mhash_set (&sm->sr_policies_index_hash, bsid, sr_policy - sm->sr_policies,
@@ -690,6 +770,19 @@ sr_policy_del (ip6_address_t * bsid, u32 index)
       vec_free (segment_list->rewrite_bsid);
     pool_put_index (sm->sid_lists, *sl_index);
   }
+
+  if (sr_policy->plugin)
+    {
+      sr_policy_fn_registration_t *plugin = 0;
+
+      plugin =
+	pool_elt_at_index (sm->policy_plugin_functions,
+			   sr_policy->plugin - SR_BEHAVIOR_LAST);
+
+      plugin->removal (sr_policy);
+      sr_policy->plugin = 0;
+      sr_policy->plugin_mem = NULL;
+    }
 
   /* Remove SR policy entry */
   mhash_unset (&sm->sr_policies_index_hash, &sr_policy->bsid, NULL);
@@ -824,6 +917,7 @@ static clib_error_t *
 sr_policy_command_fn (vlib_main_t * vm, unformat_input_t * input,
 		      vlib_cli_command_t * cmd)
 {
+  ip6_sr_main_t *sm = &sr_main;
   int rv = -1;
   char is_del = 0, is_add = 0, is_mod = 0;
   char policy_set = 0;
@@ -834,6 +928,8 @@ sr_policy_command_fn (vlib_main_t * vm, unformat_input_t * input,
   u8 operation = 0;
   char is_encap = 1;
   char is_spray = 0;
+  u16 behavior = 0;
+  void *ls_plugin_mem = 0;
 
   while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
     {
@@ -871,6 +967,33 @@ sr_policy_command_fn (vlib_main_t * vm, unformat_input_t * input,
 	is_encap = 0;
       else if (unformat (input, "spray"))
 	is_spray = 1;
+      else if (!behavior && unformat (input, "behavior"))
+	{
+	  sr_policy_fn_registration_t *plugin = 0, **vec_plugins = 0;
+	  sr_policy_fn_registration_t **plugin_it = 0;
+
+	  /* *INDENT-OFF* */
+	  pool_foreach (plugin, sm->policy_plugin_functions,
+	    {
+	      vec_add1 (vec_plugins, plugin);
+	    });
+	  /* *INDENT-ON* */
+
+	  vec_foreach (plugin_it, vec_plugins)
+	  {
+	    if (unformat
+		(input, "%U", (*plugin_it)->ls_unformat, &ls_plugin_mem))
+	      {
+		behavior = (*plugin_it)->sr_policy_function_number;
+		break;
+	      }
+	  }
+
+	  if (!behavior)
+	    {
+	      return clib_error_return (0, "Invalid behavior");
+	    }
+	}
       else
 	break;
     }
@@ -883,11 +1006,20 @@ sr_policy_command_fn (vlib_main_t * vm, unformat_input_t * input,
 
   if (is_add)
     {
+      if (behavior && vec_len (segments) == 0)
+	{
+	  vec_add2 (segments, this_seg, 1);
+	  clib_memset (this_seg, 0, sizeof (*this_seg));
+	}
+
       if (vec_len (segments) == 0)
 	return clib_error_return (0, "No Segment List specified");
+
       rv = sr_policy_add (&bsid, segments, weight,
 			  (is_spray ? SR_POLICY_TYPE_SPRAY :
-			   SR_POLICY_TYPE_DEFAULT), fib_table, is_encap);
+			   SR_POLICY_TYPE_DEFAULT), fib_table, is_encap,
+			  behavior, ls_plugin_mem);
+
       vec_free (segments);
     }
   else if (is_del)
@@ -903,10 +1035,13 @@ sr_policy_command_fn (vlib_main_t * vm, unformat_input_t * input,
 	return clib_error_return (0, "No Segment List specified");
       if (operation == 3 && weight == (u32) ~ 0)
 	return clib_error_return (0, "No new weight for the SL specified");
+
       rv = sr_policy_mod ((sr_policy_index != (u32) ~ 0 ? NULL : &bsid),
 			  sr_policy_index, fib_table, operation, segments,
 			  sl_index, weight);
-      vec_free (segments);
+
+      if (segments)
+	vec_free (segments);
     }
 
   switch (rv)
@@ -3158,6 +3293,96 @@ VLIB_REGISTER_NODE (sr_policy_rewrite_b_encaps_node) = {
     foreach_sr_policy_rewrite_next
 #undef _
   },
+};
+/* *INDENT-ON* */
+
+/*************************** SR Policy plugins ******************************/
+/**
+ * @brief SR Policy plugin registry
+ */
+int
+sr_policy_register_function (vlib_main_t * vm, u8 * fn_name,
+			     u8 * keyword_str, u8 * def_str,
+			     u8 * params_str, u8 prefix_length,
+			     dpo_type_t * dpo,
+			     format_function_t * ls_format,
+			     unformat_function_t * ls_unformat,
+			     sr_p_plugin_callback_t * creation_fn,
+			     sr_p_plugin_callback_t * removal_fn)
+{
+  ip6_sr_main_t *sm = &sr_main;
+  uword *p;
+
+  sr_policy_fn_registration_t *plugin;
+
+  /* Did this function exist? If so update it */
+  p = hash_get_mem (sm->policy_plugin_functions_by_key, fn_name);
+  if (p)
+    {
+      plugin = pool_elt_at_index (sm->policy_plugin_functions, p[0]);
+    }
+  /* Else create a new one and set hash key */
+  else
+    {
+      pool_get (sm->policy_plugin_functions, plugin);
+      hash_set_mem (sm->policy_plugin_functions_by_key, fn_name,
+		    plugin - sm->policy_plugin_functions);
+    }
+
+  clib_memset (plugin, 0, sizeof (*plugin));
+
+  plugin->sr_policy_function_number = (plugin - sm->policy_plugin_functions);
+  plugin->sr_policy_function_number += SR_BEHAVIOR_LAST;
+  plugin->prefix_length = prefix_length;
+  plugin->ls_format = ls_format;
+  plugin->ls_unformat = ls_unformat;
+  plugin->creation = creation_fn;
+  plugin->removal = removal_fn;
+  clib_memcpy (&plugin->dpo, dpo, sizeof (dpo_type_t));
+  plugin->function_name = format (0, "%s%c", fn_name, 0);
+  plugin->keyword_str = format (0, "%s%c", keyword_str, 0);
+  plugin->def_str = format (0, "%s%c", def_str, 0);
+  plugin->params_str = format (0, "%s%c", params_str, 0);
+
+  return plugin->sr_policy_function_number;
+}
+
+/**
+ * @brief CLI function to 'show' all available SR LocalSID behaviors
+ */
+static clib_error_t *
+show_sr_policy_behaviors_command_fn (vlib_main_t * vm,
+				     unformat_input_t * input,
+				     vlib_cli_command_t * cmd)
+{
+  ip6_sr_main_t *sm = &sr_main;
+  sr_policy_fn_registration_t *plugin;
+  sr_policy_fn_registration_t **plugins_vec = 0;
+  int i;
+
+  vlib_cli_output (vm, "SR Policy behaviors:\n-----------------------\n\n");
+
+  /* *INDENT-OFF* */
+  pool_foreach (plugin, sm->policy_plugin_functions,
+    ({ vec_add1 (plugins_vec, plugin); }));
+  /* *INDENT-ON* */
+
+  vlib_cli_output (vm, "Plugin behaviors:\n");
+  for (i = 0; i < vec_len (plugins_vec); i++)
+    {
+      plugin = plugins_vec[i];
+      vlib_cli_output (vm, "\t%s\t-> %s.\n", plugin->keyword_str,
+		       plugin->def_str);
+      vlib_cli_output (vm, "\t\tParameters: '%s'\n", plugin->params_str);
+    }
+  return 0;
+}
+
+/* *INDENT-OFF* */
+VLIB_CLI_COMMAND (show_sr_policy_behaviors_command, static) = {
+  .path = "show sr policy behaviors",
+  .short_help = "show sr policy behaviors",
+  .function = show_sr_policy_behaviors_command_fn,
 };
 /* *INDENT-ON* */
 

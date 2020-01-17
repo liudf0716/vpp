@@ -48,19 +48,19 @@ vl_api_lb_conf_t_handler
 {
   lb_main_t *lbm = &lb_main;
   vl_api_lb_conf_reply_t * rmp;
+  u32 sticky_buckets_per_core, flow_timeout;
   int rv = 0;
 
-  if (mp->sticky_buckets_per_core == ~0) {
-    mp->sticky_buckets_per_core = htonl(lbm->per_cpu_sticky_buckets);
-  }
-  if (mp->flow_timeout == ~0) {
-    mp->flow_timeout = htonl(lbm->flow_timeout);
-  }
+  sticky_buckets_per_core = mp->sticky_buckets_per_core == ~0
+			    ? lbm->per_cpu_sticky_buckets
+			    : ntohl(mp->sticky_buckets_per_core);
+  flow_timeout = mp->flow_timeout == ~0
+		 ? lbm->flow_timeout
+		 : ntohl(mp->flow_timeout);
 
   rv = lb_conf((ip4_address_t *)&mp->ip4_src_address,
-               (ip6_address_t *)&mp->ip6_src_address,
-               ntohl(mp->sticky_buckets_per_core),
-               ntohl(mp->flow_timeout));
+	       (ip6_address_t *)&mp->ip6_src_address,
+	       sticky_buckets_per_core, flow_timeout);
 
  REPLY_MACRO (VL_API_LB_CONF_REPLY);
 }
@@ -93,7 +93,7 @@ vl_api_lb_add_del_vip_t_handler
       mp->protocol = ~0;
     }
 
-  ip_address_decode (&mp->pfx.address, &(args.prefix));
+  memcpy (&(args.prefix.ip6), &mp->pfx.address.un.ip6, sizeof(args.prefix.ip6));
 
   if (mp->is_del) {
     u32 vip_index;
@@ -183,10 +183,20 @@ vl_api_lb_add_del_as_t_handler
   int rv = 0;
   u32 vip_index;
   ip46_address_t vip_ip_prefix;
+
+  /* if port == 0, it means all-port VIP */
+  if (mp->port == 0)
+    {
+      mp->protocol = ~0;
+    }
+
+  memcpy(&vip_ip_prefix.ip6, &mp->pfx.address.un.ip6,
+              sizeof(vip_ip_prefix.ip6));
+
   ip46_address_t as_address;
 
-  ip_address_decode (&mp->pfx.address, &vip_ip_prefix);
-  ip_address_decode (&mp->as_address, &as_address);
+  memcpy(&as_address.ip6, &mp->as_address.un.ip6,
+         sizeof(as_address.ip6));
 
   if ((rv = lb_vip_find_index(&vip_ip_prefix, mp->pfx.len,
                               mp->protocol, ntohs(mp->port), &vip_index)))

@@ -91,7 +91,7 @@ unsetup_signal_handlers (int sig)
 
 /* allocate this buffer from mheap when setting up the signal handler.
     dangerous to vec_resize it when crashing, mheap itself might have been
-    corruptted already */
+    corrupted already */
 static u8 *syslog_msg = 0;
 static int last_signum = 0;
 static uword last_faulting_address = 0;
@@ -177,10 +177,14 @@ unix_signal_handler (int signum, siginfo_t * si, ucontext_t * uc)
 	  syslog (LOG_ERR | LOG_DAEMON, "%s", syslog_msg);
 	}
 
-      /* have to remove SIGABRT to avoid recusive - os_exit calling abort() */
+      /* have to remove SIGABRT to avoid recursive - os_exit calling abort() */
       unsetup_signal_handlers (SIGABRT);
 
-      os_exit (1);
+      /* os_exit(1) causes core generation, do not do this for SIGINT */
+      if (signum == SIGINT)
+	os_exit (0);
+      else
+	os_exit (1);
     }
   else
     clib_warning ("%s", syslog_msg);
@@ -372,6 +376,7 @@ VLIB_REGISTER_NODE (startup_config_node,static) = {
     .function = startup_config_process,
     .type = VLIB_NODE_TYPE_PROCESS,
     .name = "startup-config-process",
+    .process_log2_n_stack_bytes = 18,
 };
 /* *INDENT-ON* */
 

@@ -1,6 +1,6 @@
 import os
 import time
-import socket
+from socket import inet_pton, inet_ntop
 import struct
 from traceback import format_exc, format_stack
 
@@ -15,7 +15,6 @@ from scapy.layers.inet6 import IPv6, ICMPv6ND_NS, ICMPv6ND_NA,\
     IPv6ExtHdrHopByHop
 from util import ppp, ppc
 from scapy.utils6 import in6_getnsma, in6_getnsmac, in6_ismaddr
-from scapy.utils import inet_pton, inet_ntop
 
 
 class CaptureTimeoutError(Exception):
@@ -295,6 +294,20 @@ class VppPGInterface(VppInterface):
                 raise AssertionError("Capture file present for interface %s" %
                                      self.name)
 
+    def wait_for_pg_stop(self):
+        # wait till packet-generator is stopped
+        # "show packet-generator" while it is still running gives this:
+        # Name               Enabled        Count     Parameters
+        # pcap0-sw_if_inde     Yes           64       limit 64, ...
+        #
+        # also have a 5-minute timeout just in case things go terribly wrong...
+        deadline = time.time() + 300
+        while self.test.vapi.cli('show packet-generator').find("Yes") != -1:
+            self._test.sleep(0.01)  # yield
+            if time.time() > deadline:
+                self.test.logger.debug("Timeout waiting for pg to stop")
+                break
+
     def wait_for_capture_file(self, timeout=1):
         """
         Wait until pcap capture file appears
@@ -303,6 +316,7 @@ class VppPGInterface(VppInterface):
 
         :returns: True/False if the file is present or appears within timeout
         """
+        self.wait_for_pg_stop()
         deadline = time.time() + timeout
         if not os.path.isfile(self.out_path):
             self.test.logger.debug("Waiting for capture file %s to appear, "

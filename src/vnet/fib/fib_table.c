@@ -23,6 +23,8 @@
 #include <vnet/fib/ip6_fib.h>
 #include <vnet/fib/mpls_fib.h>
 
+const static char * fib_table_flags_strings[] = FIB_TABLE_ATTRIBUTES;
+
 fib_table_t *
 fib_table_get (fib_node_index_t index,
 	       fib_protocol_t proto)
@@ -302,6 +304,21 @@ fib_table_fwding_dpo_remove (u32 fib_index,
     }
 }
 
+static void
+fib_table_source_count_inc (fib_table_t *fib_table,
+                            fib_source_t source)
+{
+    vec_validate (fib_table->ft_src_route_counts, source);
+    fib_table->ft_src_route_counts[source]++;
+}
+
+static void
+fib_table_source_count_dec (fib_table_t *fib_table,
+                            fib_source_t source)
+{
+    vec_validate (fib_table->ft_src_route_counts, source);
+    fib_table->ft_src_route_counts[source]--;
+}
 
 fib_node_index_t
 fib_table_entry_special_dpo_add (u32 fib_index,
@@ -323,7 +340,7 @@ fib_table_entry_special_dpo_add (u32 fib_index,
 						   dpo);
 
 	fib_table_entry_insert(fib_table, prefix, fib_entry_index);
-        fib_table->ft_src_route_counts[source]++;
+        fib_table_source_count_inc(fib_table, source);
     }
     else
     {
@@ -334,7 +351,7 @@ fib_table_entry_special_dpo_add (u32 fib_index,
 
         if (was_sourced != fib_entry_is_sourced(fib_entry_index, source))
         {
-            fib_table->ft_src_route_counts[source]++;
+        fib_table_source_count_inc(fib_table, source);
         }
     }
 
@@ -362,7 +379,7 @@ fib_table_entry_special_dpo_update (u32 fib_index,
 						   dpo);
 
 	fib_table_entry_insert(fib_table, prefix, fib_entry_index);
-        fib_table->ft_src_route_counts[source]++;
+        fib_table_source_count_inc(fib_table, source);
     }
     else
     {
@@ -377,7 +394,7 @@ fib_table_entry_special_dpo_update (u32 fib_index,
 
         if (was_sourced != fib_entry_is_sourced(fib_entry_index, source))
         {
-            fib_table->ft_src_route_counts[source]++;
+            fib_table_source_count_inc(fib_table, source);
         }
     }
 
@@ -459,7 +476,7 @@ fib_table_entry_special_remove (u32 fib_index,
 	 */
         if (was_sourced != fib_entry_is_sourced(fib_entry_index, source))
         {
-            fib_table->ft_src_route_counts[source]--;
+            fib_table_source_count_dec(fib_table, source);
         }
 
 	fib_entry_unlock(fib_entry_index);
@@ -589,7 +606,7 @@ fib_table_entry_path_add2 (u32 fib_index,
 					   rpaths);
 
 	fib_table_entry_insert(fib_table, prefix, fib_entry_index);
-        fib_table->ft_src_route_counts[source]++;
+        fib_table_source_count_inc(fib_table, source);
     }
     else
     {
@@ -600,7 +617,7 @@ fib_table_entry_path_add2 (u32 fib_index,
 
         if (was_sourced != fib_entry_is_sourced(fib_entry_index, source))
         {
-            fib_table->ft_src_route_counts[source]++;
+            fib_table_source_count_inc(fib_table, source);
         }
     }
 
@@ -682,7 +699,7 @@ fib_table_entry_path_remove2 (u32 fib_index,
 	 */
         if (was_sourced != fib_entry_is_sourced(fib_entry_index, source))
         {
-            fib_table->ft_src_route_counts[source]--;
+            fib_table_source_count_dec(fib_table, source);
         }
 
 	fib_entry_unlock(fib_entry_index);
@@ -761,7 +778,7 @@ fib_table_entry_update (u32 fib_index,
 					   paths);
 
     	fib_table_entry_insert(fib_table, prefix, fib_entry_index);
-        fib_table->ft_src_route_counts[source]++;
+        fib_table_source_count_inc(fib_table, source);
     }
     else
     {
@@ -772,7 +789,7 @@ fib_table_entry_update (u32 fib_index,
 
         if (was_sourced != fib_entry_is_sourced(fib_entry_index, source))
         {
-            fib_table->ft_src_route_counts[source]++;
+            fib_table_source_count_inc(fib_table, source);
         }
     }
 
@@ -854,7 +871,7 @@ fib_table_entry_delete_i (u32 fib_index,
      */
     if (was_sourced != fib_entry_is_sourced(fib_entry_index, source))
     {
-        fib_table->ft_src_route_counts[source]--;
+        fib_table_source_count_dec(fib_table, source);
     }
 
     fib_entry_unlock(fib_entry_index);
@@ -1244,6 +1261,27 @@ fib_table_sub_tree_walk (u32 fib_index,
     }
 }
 
+static void
+fib_table_lock_dec (fib_table_t *fib_table,
+                    fib_source_t source)
+{
+    vec_validate(fib_table->ft_locks, source);
+
+    fib_table->ft_locks[source]--;
+    fib_table->ft_total_locks--;
+}
+
+static void
+fib_table_lock_inc (fib_table_t *fib_table,
+                    fib_source_t source)
+{
+    vec_validate(fib_table->ft_locks, source);
+
+    ASSERT(fib_table->ft_total_locks < (0xffffffff - 1));
+    fib_table->ft_locks[source]++;
+    fib_table->ft_total_locks++;
+}
+
 void
 fib_table_unlock (u32 fib_index,
 		  fib_protocol_t proto,
@@ -1252,10 +1290,9 @@ fib_table_unlock (u32 fib_index,
     fib_table_t *fib_table;
 
     fib_table = fib_table_get(fib_index, proto);
-    fib_table->ft_locks[source]--;
-    fib_table->ft_locks[FIB_TABLE_TOTAL_LOCKS]--;
+    fib_table_lock_dec(fib_table, source);
 
-    if (0 == fib_table->ft_locks[FIB_TABLE_TOTAL_LOCKS])
+    if (0 == fib_table->ft_total_locks)
     {
         /*
          * no more locak from any source - kill it
@@ -1273,10 +1310,7 @@ fib_table_lock (u32 fib_index,
 
     fib_table = fib_table_get(fib_index, proto);
 
-    ASSERT(fib_table->ft_locks[source] < (0xffff - 1));
-
-    fib_table->ft_locks[source]++;
-    fib_table->ft_locks[FIB_TABLE_TOTAL_LOCKS]++;
+    fib_table_lock_inc(fib_table, source);
 }
 
 u32
@@ -1301,6 +1335,26 @@ format_fib_table_name (u8* s, va_list* ap)
     fib_table = fib_table_get(fib_index, proto);
 
     s = format(s, "%v", fib_table->ft_desc);
+
+    return (s);
+}
+
+u8*
+format_fib_table_flags (u8 *s, va_list *args)
+{
+    fib_table_flags_t flags = va_arg(*args, int);
+    fib_table_attribute_t attr;
+
+    if (!flags)
+    {
+        return format(s, "none");
+    }
+
+    FOR_EACH_FIB_TABLE_ATTRIBUTE(attr) {
+        if (1 << attr & flags) {
+            s = format(s, "%s", fib_table_flags_strings[attr]);
+        }
+    }
 
     return (s);
 }
@@ -1335,7 +1389,6 @@ fib_table_flush_cb (fib_node_index_t fib_entry_index,
     return (FIB_TABLE_WALK_CONTINUE);
 }
 
-
 void
 fib_table_flush (u32 fib_index,
 		 fib_protocol_t proto,
@@ -1349,6 +1402,79 @@ fib_table_flush (u32 fib_index,
 
     fib_table_walk(fib_index, proto,
                    fib_table_flush_cb,
+                   &ctx);
+
+    vec_foreach(fib_entry_index, ctx.ftf_entries)
+    {
+        fib_table_entry_delete_index(*fib_entry_index, source);
+    }
+
+    vec_free(ctx.ftf_entries);
+}
+
+static fib_table_walk_rc_t
+fib_table_mark_cb (fib_node_index_t fib_entry_index,
+                   void *arg)
+{
+    fib_table_flush_ctx_t *ctx = arg;
+
+    if (fib_entry_is_sourced(fib_entry_index, ctx->ftf_source))
+    {
+        fib_entry_mark(fib_entry_index, ctx->ftf_source);
+    }
+    return (FIB_TABLE_WALK_CONTINUE);
+}
+
+void
+fib_table_mark (u32 fib_index,
+                fib_protocol_t proto,
+                fib_source_t source)
+{
+    fib_table_flush_ctx_t ctx = {
+        .ftf_source = source,
+    };
+    fib_table_t *fib_table;
+
+    fib_table = fib_table_get(fib_index, proto);
+
+    fib_table->ft_epoch++;
+    fib_table->ft_flags |= FIB_TABLE_FLAG_RESYNC;
+
+    fib_table_walk(fib_index, proto,
+                   fib_table_mark_cb,
+                   &ctx);
+}
+
+static fib_table_walk_rc_t
+fib_table_sweep_cb (fib_node_index_t fib_entry_index,
+                    void *arg)
+{
+    fib_table_flush_ctx_t *ctx = arg;
+
+    if (fib_entry_is_marked(fib_entry_index, ctx->ftf_source))
+    {
+        vec_add1(ctx->ftf_entries, fib_entry_index);
+    }
+    return (FIB_TABLE_WALK_CONTINUE);
+}
+
+void
+fib_table_sweep (u32 fib_index,
+                 fib_protocol_t proto,
+                 fib_source_t source)
+{
+    fib_table_flush_ctx_t ctx = {
+        .ftf_source = source,
+    };
+    fib_node_index_t *fib_entry_index;
+    fib_table_t *fib_table;
+
+    fib_table = fib_table_get(fib_index, proto);
+
+    fib_table->ft_flags &= ~FIB_TABLE_FLAG_RESYNC;
+
+    fib_table_walk(fib_index, proto,
+                   fib_table_sweep_cb,
                    &ctx);
 
     vec_foreach(fib_entry_index, ctx.ftf_entries)

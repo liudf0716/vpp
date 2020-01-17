@@ -350,17 +350,17 @@ vlib_buffer_enqueue_to_next (vlib_main_t * vm, vlib_node_runtime_t * node,
 	  max = clib_min (n_left_to_next, count);
 	}
 #if defined(CLIB_HAVE_VEC512)
-      u16x32 next32 = u16x32_load_unaligned (nexts);
+      u16x32 next32 = CLIB_MEM_OVERFLOW_LOAD (u16x32_load_unaligned, nexts);
       next32 = (next32 == u16x32_splat (next32[0]));
       u64 bitmap = u16x32_msb_mask (next32);
       n_enqueued = count_trailing_zeros (~bitmap);
 #elif defined(CLIB_HAVE_VEC256)
-      u16x16 next16 = u16x16_load_unaligned (nexts);
+      u16x16 next16 = CLIB_MEM_OVERFLOW_LOAD (u16x16_load_unaligned, nexts);
       next16 = (next16 == u16x16_splat (next16[0]));
       u64 bitmap = u8x32_msb_mask ((u8x32) next16);
       n_enqueued = count_trailing_zeros (~bitmap) / 2;
 #elif defined(CLIB_HAVE_VEC128) && defined(CLIB_HAVE_VEC128_MSB_MASK)
-      u16x8 next8 = u16x8_load_unaligned (nexts);
+      u16x8 next8 = CLIB_MEM_OVERFLOW_LOAD (u16x8_load_unaligned, nexts);
       next8 = (next8 == u16x8_splat (next8[0]));
       u64 bitmap = u8x16_msb_mask ((u8x16) next8);
       n_enqueued = count_trailing_zeros (~bitmap) / 2;
@@ -517,7 +517,6 @@ vlib_buffer_enqueue_to_thread (vlib_main_t * vm, u32 frame_queue_index,
 	      n_drop++;
 	      goto next;
 	    }
-	  vlib_mains[next_thread_index]->check_frame_queues = 1;
 
 	  if (hf)
 	    hf->n_vectors = VLIB_FRAME_SIZE - n_left_to_next_thread;
@@ -539,6 +538,7 @@ vlib_buffer_enqueue_to_thread (vlib_main_t * vm, u32 frame_queue_index,
 	{
 	  hf->n_vectors = VLIB_FRAME_SIZE;
 	  vlib_put_frame_queue_elt (hf);
+	  vlib_mains[current_thread_index]->check_frame_queues = 1;
 	  current_thread_index = ~0;
 	  ptd->handoff_queue_elt_by_thread_index[next_thread_index] = 0;
 	  hf = 0;
@@ -567,6 +567,7 @@ vlib_buffer_enqueue_to_thread (vlib_main_t * vm, u32 frame_queue_index,
 	  if (1 || hf->n_vectors == hf->last_n_vectors)
 	    {
 	      vlib_put_frame_queue_elt (hf);
+	      vlib_mains[i]->check_frame_queues = 1;
 	      ptd->handoff_queue_elt_by_thread_index[i] = 0;
 	    }
 	  else

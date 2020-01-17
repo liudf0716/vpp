@@ -1,8 +1,9 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import unittest
 
-from scapy.layers.l2 import Ether, Raw
+from scapy.layers.l2 import Ether
+from scapy.packet import Raw
 from scapy.layers.inet import IP, IPOption
 from scapy.contrib.igmpv3 import IGMPv3, IGMPv3gr, IGMPv3mq, IGMPv3mr
 
@@ -202,7 +203,7 @@ class TestIgmp(VppTestCase):
                IP(src=self.pg0.remote_ip4, dst='224.0.0.1', tos=0xc0) /
                IGMPv3(type="Membership Query", mrcode=100) /
                IGMPv3mq(gaddr="0.0.0.0") /
-               Raw('\x00' * 10))
+               Raw(b'\x00' * 10))
 
         self.send(self.pg0, p_g)
 

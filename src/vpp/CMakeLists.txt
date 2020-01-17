@@ -38,12 +38,14 @@ set(VPP_API_FILES
   api/vpe.api
 )
 
-vpp_add_api_files(vpp ${VPP_API_FILES})
+vpp_add_api_files(vpp core vpp ${VPP_API_FILES})
 
 foreach(file ${VPP_API_FILES})
   get_filename_component(dir ${file} DIRECTORY)
   install(
     FILES ${CMAKE_CURRENT_BINARY_DIR}/${file}.h
+    ${CMAKE_CURRENT_BINARY_DIR}/${file}_enum.h
+    ${CMAKE_CURRENT_BINARY_DIR}/${file}_types.h
     DESTINATION include/vpp/${dir}
     COMPONENT vpp-dev
   )

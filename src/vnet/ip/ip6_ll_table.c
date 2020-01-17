@@ -210,18 +210,20 @@ typedef struct
   u64 count_by_prefix_length[129];
 } count_routes_in_fib_at_prefix_length_arg_t;
 
-static void
-count_routes_in_fib_at_prefix_length (BVT (clib_bihash_kv) * kvp, void *arg)
+static int
+count_routes_in_fib_at_prefix_length (clib_bihash_kv_24_8_t * kvp, void *arg)
 {
   count_routes_in_fib_at_prefix_length_arg_t *ap = arg;
   int mask_width;
 
   if ((kvp->key[2] >> 32) != ap->fib_index)
-    return;
+    return (BIHASH_WALK_CONTINUE);
 
   mask_width = kvp->key[2] & 0xFF;
 
   ap->count_by_prefix_length[mask_width]++;
+
+  return (BIHASH_WALK_CONTINUE);
 }
 
 static clib_error_t *
@@ -283,7 +285,7 @@ ip6_ll_show_fib (vlib_main_t * vm,
     s = format (s, "%U, fib_index:%d, locks:[",
 		format_fib_table_name, fib_index,
 		FIB_PROTOCOL_IP6, fib_index);
-    FOR_EACH_FIB_SOURCE (source)
+    vec_foreach_index (source, fib_table->ft_locks)
     {
       if (0 != fib_table->ft_locks[source])
 	{

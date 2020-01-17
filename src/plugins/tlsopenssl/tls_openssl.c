@@ -424,8 +424,10 @@ openssl_ctx_read (tls_ctx_t * ctx, session_t * tls_session)
 
   if (PREDICT_FALSE (SSL_in_init (oc->ssl)))
     {
-      openssl_ctx_handshake_rx (ctx, tls_session);
-      return 0;
+      if (openssl_ctx_handshake_rx (ctx, tls_session) < 0)
+	return 0;
+      else
+	goto check_app_fifo;
     }
 
   f = tls_session->rx_fifo;
@@ -479,7 +481,7 @@ check_app_fifo:
       return wrote;
     }
   svm_fifo_enqueue_nocopy (f, read);
-  if (read < enq_max && BIO_ctrl_pending (oc->wbio) > 0)
+  if (read < enq_max && SSL_pending (oc->ssl) > 0)
     {
       deq_now = clib_min (svm_fifo_max_write_chunk (f), enq_max - read);
       read = SSL_read (oc->ssl, svm_fifo_tail (f), deq_now);
@@ -487,8 +489,10 @@ check_app_fifo:
 	svm_fifo_enqueue_nocopy (f, read);
     }
 
-  tls_notify_app_enqueue (ctx, app_session);
-  if (BIO_ctrl_pending (oc->wbio) > 0)
+  /* If handshake just completed, session may still be in accepting state */
+  if (app_session->session_state >= SESSION_STATE_READY)
+    tls_notify_app_enqueue (ctx, app_session);
+  if (SSL_pending (oc->ssl) > 0)
     tls_add_vpp_q_builtin_rx_evt (tls_session);
 
   return wrote;
@@ -827,7 +831,12 @@ tls_init_ca_chain (void)
       return -1;
     }
 
+#if OPENSSL_VERSION_NUMBER >= 0x30000000L
+  rv = X509_STORE_load_file (om->cert_store, tm->ca_cert_path);
+#else
   rv = X509_STORE_load_locations (om->cert_store, tm->ca_cert_path, 0);
+#endif
+
   if (rv < 0)
     {
       clib_warning ("failed to load ca certificate");

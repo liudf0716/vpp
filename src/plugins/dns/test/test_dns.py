@@ -1,10 +1,9 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import unittest
 
 from framework import VppTestCase, VppTestRunner
 from vpp_ip_route import VppIpTable, VppIpRoute, VppRoutePath
-from vpp_ip import VppIpPrefix
 from ipaddress import *
 
 import scapy.compat
@@ -82,13 +81,13 @@ class TestDns(VppTestCase):
         self.logger.info(self.vapi.cli("dns cache add bozo.clown.org 1.2.3.4"))
 
         # Test the binary API
-        rv = self.vapi.dns_resolve_name(name='bozo.clown.org')
+        rv = self.vapi.dns_resolve_name(name=b'bozo.clown.org')
         self.assertEqual(rv.ip4_address, IPv4Address(u'1.2.3.4').packed)
 
         # Configure 127.0.0.1/8 on the pg interface
         self.vapi.sw_interface_add_del_address(
             sw_if_index=self.pg0.sw_if_index,
-            prefix=VppIpPrefix("127.0.0.1", 8).encode())
+            prefix="127.0.0.1/8")
 
         # Send a couple of DNS request packets, one for bozo.clown.org
         # and one for no.clown.org which won't resolve

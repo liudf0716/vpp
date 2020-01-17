@@ -52,6 +52,7 @@
 #include <vnet/fib/ip6_fib.h>
 #include <vnet/l2/l2_output.h>
 #include <vnet/l2/l2_input.h>
+#include <vnet/classify/vnet_classify.h>
 
 static int
 compare_interface_names (void *a1, void *a2)
@@ -277,6 +278,7 @@ show_sw_interfaces (vlib_main_t * vm,
   u8 show_addresses = 0;
   u8 show_features = 0;
   u8 show_tag = 0;
+  u8 show_vtr = 0;
   int verbose = 0;
 
   /*
@@ -300,6 +302,8 @@ show_sw_interfaces (vlib_main_t * vm,
 	    show_features = 1;
 	  else if (unformat (linput, "tag"))
 	    show_tag = 1;
+	  else if (unformat (linput, "vtr"))
+	    show_vtr = 1;
 	  else if (unformat (linput, "verbose"))
 	    verbose = 1;
 	  else
@@ -312,7 +316,7 @@ show_sw_interfaces (vlib_main_t * vm,
 	}
       unformat_free (linput);
     }
-  if (show_features || show_tag)
+  if (show_features || show_tag || show_vtr)
     {
       if (sw_if_index == ~(u32) 0)
 	{
@@ -350,6 +354,27 @@ show_sw_interfaces (vlib_main_t * vm,
 		       format_vnet_sw_if_index_name, vnm, sw_if_index,
 		       tag ? (char *) tag : "(none)");
       vec_free (sorted_sis);
+      return 0;
+    }
+
+  /*
+   * Show vlan tag rewrite data for one interface.
+   */
+  if (show_vtr)
+    {
+      u32 vtr_op = L2_VTR_DISABLED;
+      u32 push_dot1q = 0, tag1 = 0, tag2 = 0;
+
+      if (l2vtr_get (vm, vnm, sw_if_index,
+		     &vtr_op, &push_dot1q, &tag1, &tag2) != 0)
+	{
+	  vlib_cli_output (vm, "%U: Problem getting vlan tag-rewrite data",
+			   format_vnet_sw_if_index_name, vnm, sw_if_index);
+	  return 0;
+	}
+      vlib_cli_output (vm, "%U:  VTR %0U",
+		       format_vnet_sw_if_index_name, vnm, sw_if_index,
+		       format_vtr, vtr_op, push_dot1q, tag1, tag2);
       return 0;
     }
 
@@ -474,7 +499,7 @@ done:
 /* *INDENT-OFF* */
 VLIB_CLI_COMMAND (show_sw_interfaces_command, static) = {
   .path = "show interface",
-  .short_help = "show interface [address|addr|features|feat] [<interface> [<interface> [..]]] [verbose]",
+  .short_help = "show interface [address|addr|features|feat|vtr] [<interface> [<interface> [..]]] [verbose]",
   .function = show_sw_interfaces,
   .is_mp_safe = 1,
 };
@@ -757,9 +782,6 @@ create_sub_interfaces (vlib_main_t * vm,
 	  continue;
 	}
 
-      kp = clib_mem_alloc (sizeof (*kp));
-      *kp = sup_and_sub_key;
-
       template.type = VNET_SW_INTERFACE_TYPE_SUB;
       template.flood_class = VNET_FLOOD_CLASS_NORMAL;
       template.sup_sw_if_index = hi->sw_if_index;
@@ -770,6 +792,9 @@ create_sub_interfaces (vlib_main_t * vm,
       error = vnet_create_sw_interface (vnm, &template, &sw_if_index);
       if (error)
 	goto done;
+
+      kp = clib_mem_alloc (sizeof (*kp));
+      *kp = sup_and_sub_key;
 
       hash_set (hi->sub_interface_sw_if_index_by_id, id, sw_if_index);
       hash_set_mem (im->sw_if_index_by_sup_and_sub, kp, sw_if_index);

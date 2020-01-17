@@ -102,6 +102,13 @@ fib_prefix_from_mpls_label (mpls_label_t label,
     pfx->fp_eos = eos;
 }
 
+void
+fib_prefix_copy (fib_prefix_t *dst,
+                 const fib_prefix_t *src)
+{
+    clib_memcpy(dst, src, sizeof(*dst));
+}
+
 int
 fib_prefix_cmp (const fib_prefix_t *p1,
 		const fib_prefix_t *p2)
@@ -155,6 +162,21 @@ fib_prefix_is_cover (const fib_prefix_t *p1,
 					      p1->fp_len));
     case FIB_PROTOCOL_MPLS:
 	break;
+    }
+    return (0);
+}
+
+u8
+fib_prefix_get_host_length (fib_protocol_t proto)
+{
+    switch (proto)
+    {
+    case FIB_PROTOCOL_IP4:
+	return (32);
+    case FIB_PROTOCOL_IP6:
+	return (128);
+    case FIB_PROTOCOL_MPLS:
+	return (21);
     }
     return (0);
 }

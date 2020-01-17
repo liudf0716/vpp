@@ -72,7 +72,7 @@
  */
 #define foreach_vlib_buffer_flag \
   _( 0, IS_TRACED, 0)					\
-  _( 1, NEXT_PRESENT, 0)				\
+  _( 1, NEXT_PRESENT, "next-present")			\
   _( 2, TOTAL_LENGTH_VALID, 0)				\
   _( 3, EXT_HDR_VALID, "ext-hdr-valid")
 
@@ -349,7 +349,6 @@ vlib_buffer_push_uninit (vlib_buffer_t * b, u8 size)
 always_inline void *
 vlib_buffer_make_headroom (vlib_buffer_t * b, u8 size)
 {
-  ASSERT (b->current_data + VLIB_BUFFER_PRE_DATA_SIZE >= size);
   b->current_data += size;
   return vlib_buffer_get_current (b);
 }
@@ -411,12 +410,15 @@ vlib_buffer_pull (vlib_buffer_t * b, u8 size)
 /* Forward declaration. */
 struct vlib_main_t;
 
+#define VLIB_BUFFER_POOL_PER_THREAD_CACHE_SZ 512
+
 typedef struct
 {
   CLIB_CACHE_LINE_ALIGN_MARK (cacheline0);
-  u32 *cached_buffers;
-  u32 n_alloc;
+  u32 cached_buffers[VLIB_BUFFER_POOL_PER_THREAD_CACHE_SZ];
+  u32 n_cached;
 } vlib_buffer_pool_thread_t;
+
 typedef struct
 {
   CLIB_CACHE_LINE_ALIGN_MARK (cacheline0);
@@ -428,6 +430,7 @@ typedef struct
   u32 physmem_map_index;
   u32 data_size;
   u32 n_buffers;
+  u32 n_avail;
   u32 *buffers;
   u8 *name;
   clib_spinlock_t lock;

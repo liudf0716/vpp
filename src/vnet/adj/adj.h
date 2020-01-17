@@ -150,7 +150,7 @@ struct ip_adjacency_t_;
  * @brief A function type for post-rewrite fixups on midchain adjacency
  */
 typedef void (*adj_midchain_fixup_t) (vlib_main_t * vm,
-				      struct ip_adjacency_t_ * adj,
+				      const struct ip_adjacency_t_ * adj,
 				      vlib_buffer_t * b0,
                                       const void *data);
 
@@ -316,7 +316,7 @@ typedef struct ip_adjacency_t_
   CLIB_CACHE_LINE_ALIGN_MARK (cacheline1);
 
   /* Rewrite in second/third cache lines */
-  vnet_declare_rewrite (VLIB_BUFFER_PRE_DATA_SIZE);
+  VNET_DECLARE_REWRITE;
 
   /**
    * more control plane members that do not fit on the first cacheline
@@ -326,6 +326,10 @@ typedef struct ip_adjacency_t_
    */
   struct adj_delegate_t_ *ia_delegates;
 
+  /**
+   * The VLIB node in which this adj is used to forward packets
+   */
+  u32 ia_node_index;
 } ip_adjacency_t;
 
 STATIC_ASSERT ((STRUCT_OFFSET_OF (ip_adjacency_t, cacheline0) == 0),
@@ -388,12 +392,6 @@ extern int adj_is_up (adj_index_t ai);
  * @brief Return the link type of the adjacency
  */
 extern const u8* adj_get_rewrite (adj_index_t ai);
-
-/**
- * @brief Notify the adjacency subsystem that the features settings for
- * an interface have changed
- */
-extern void adj_feature_update (u32 sw_if_index, u8 arc_index, u8 is_enable);
 
 /**
  * @brief descend the FIB graph looking for loops

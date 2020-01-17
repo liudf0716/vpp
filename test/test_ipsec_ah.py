@@ -6,7 +6,8 @@ from scapy.layers.ipsec import AH
 from framework import VppTestRunner
 from template_ipsec import TemplateIpsec, IpsecTra46Tests, IpsecTun46Tests, \
     config_tun_params, config_tra_params, IPsecIPv4Params, IPsecIPv6Params, \
-    IpsecTra4, IpsecTun4, IpsecTra6, IpsecTun6
+    IpsecTra4, IpsecTun4, IpsecTra6, IpsecTun6, \
+    IpsecTun6HandoffTests, IpsecTun4HandoffTests
 from template_ipsec import IpsecTcpTests
 from vpp_ipsec import VppIpsecSA, VppIpsecSpd, VppIpsecSpdEntry,\
         VppIpsecSpdItfBinding
@@ -88,6 +89,7 @@ class ConfigIpsecAH(TemplateIpsec):
             config_tra_params(p, self.encryption_type)
         for p in params:
             self.config_ah_tun(p)
+            config_tun_params(p, self.encryption_type, self.tun_if)
         for p in params:
             d = DpoProto.DPO_PROTO_IP6 if p.is_ipv6 else DpoProto.DPO_PROTO_IP4
             r = VppIpRoute(self,  p.remote_tun_if_host, p.addr_len,
@@ -297,6 +299,13 @@ class TestIpsecAh1(TemplateIpsecAh, IpsecTcpTests):
 
 class TestIpsecAh2(TemplateIpsecAh, IpsecTra46Tests, IpsecTun46Tests):
     """ Ipsec AH w/ SHA1 """
+    pass
+
+
+class TestIpsecAhHandoff(TemplateIpsecAh,
+                         IpsecTun6HandoffTests,
+                         IpsecTun4HandoffTests):
+    """ Ipsec AH Handoff """
     pass
 
 

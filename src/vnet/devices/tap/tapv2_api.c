@@ -25,6 +25,9 @@
 #include <vnet/ethernet/ethernet.h>
 #include <vnet/ip/ip.h>
 
+#include <vnet/ethernet/ethernet_types_api.h>
+#include <vnet/ip/ip_types_api.h>
+
 #include <vnet/vnet_msg_enum.h>
 
 #define vl_typedefs		/* define message structures */
@@ -52,10 +55,15 @@ _(SW_INTERFACE_TAP_V2_DUMP, sw_interface_tap_v2_dump)
 static void
 vl_api_tap_create_v2_t_handler (vl_api_tap_create_v2_t * mp)
 {
+  vl_api_registration_t *reg;
+  reg = vl_api_client_index_to_registration (mp->client_index);
+  if (!reg)
+    return;
+
   vnet_main_t *vnm = vnet_get_main ();
   vlib_main_t *vm = vlib_get_main ();
   vl_api_tap_create_v2_reply_t *rmp;
-  vl_api_registration_t *reg;
+
   tap_create_if_args_t _a, *ap = &_a;
 
   clib_memset (ap, 0, sizeof (*ap));
@@ -63,20 +71,28 @@ vl_api_tap_create_v2_t_handler (vl_api_tap_create_v2_t * mp)
   ap->id = ntohl (mp->id);
   if (!mp->use_random_mac)
     {
-      clib_memcpy (ap->mac_addr, mp->mac_address, 6);
+      mac_address_decode (mp->mac_address, &ap->mac_addr);
       ap->mac_addr_set = 1;
     }
   ap->rx_ring_sz = ntohs (mp->rx_ring_sz);
   ap->tx_ring_sz = ntohs (mp->tx_ring_sz);
   ap->sw_if_index = (u32) ~ 0;
 
+  if (mp->num_rx_queues < 1)
+    {
+      ap->rv = VNET_API_ERROR_INVALID_ARGUMENT;
+      ap->sw_if_index = ~0;
+      goto done;
+    }
+
+  ap->num_rx_queues = mp->num_rx_queues;
+
   if (mp->host_if_name_set)
     ap->host_if_name = mp->host_if_name;
 
   if (mp->host_mac_addr_set)
     {
-      clib_memcpy (ap->host_mac_addr, mp->host_mac_addr, 6);
-      ap->mac_addr_set = 1;
+      mac_address_decode (mp->host_mac_addr, &ap->host_mac_addr);
     }
 
   if (mp->host_namespace_set)
@@ -85,27 +101,27 @@ vl_api_tap_create_v2_t_handler (vl_api_tap_create_v2_t * mp)
   if (mp->host_bridge_set)
     ap->host_bridge = mp->host_bridge;
 
-  if (mp->host_ip4_addr_set)
+  if (mp->host_ip4_prefix_set)
     {
-      clib_memcpy (&ap->host_ip4_addr.as_u8, mp->host_ip4_addr, 4);
-      ap->host_ip4_prefix_len = mp->host_ip4_prefix_len;
+      ip4_address_decode (mp->host_ip4_prefix.address, &ap->host_ip4_addr);
+      ap->host_ip4_prefix_len = mp->host_ip4_prefix.len;
     }
 
-  if (mp->host_ip6_addr_set)
+  if (mp->host_ip6_prefix_set)
     {
-      clib_memcpy (&ap->host_ip6_addr, mp->host_ip6_addr, 16);
-      ap->host_ip6_prefix_len = mp->host_ip6_prefix_len;
+      ip6_address_decode (mp->host_ip6_prefix.address, &ap->host_ip6_addr);
+      ap->host_ip6_prefix_len = mp->host_ip6_prefix.len;
     }
 
   if (mp->host_ip4_gw_set)
     {
-      clib_memcpy (&ap->host_ip4_gw, mp->host_ip4_gw, 4);
+      ip4_address_decode (mp->host_ip4_gw, &ap->host_ip4_gw);
       ap->host_ip4_gw_set = 1;
     }
 
   if (mp->host_ip6_gw_set)
     {
-      clib_memcpy (&ap->host_ip6_gw, mp->host_ip6_gw, 16);
+      ip6_address_decode (mp->host_ip6_gw, &ap->host_ip6_gw);
       ap->host_ip6_gw_set = 1;
     }
 
@@ -119,20 +135,15 @@ vl_api_tap_create_v2_t_handler (vl_api_tap_create_v2_t * mp)
 
   tap_create_if (vm, ap);
 
-  reg = vl_api_client_index_to_registration (mp->client_index);
-  if (!reg)
-    return;;
 
   /* If a tag was supplied... */
-  if (mp->tag[0])
+  if (vl_api_string_len (&mp->tag))
     {
-      /* Make sure it's a proper C-string */
-      mp->tag[ARRAY_LEN (mp->tag) - 1] = 0;
-      u8 *tag = format (0, "%s%c", mp->tag, 0);
+      u8 *tag = format (0, "%s%c", vl_api_from_api_string (&mp->tag), 0);
       vnet_set_sw_interface_tag (vnm, tag, ap->sw_if_index);
     }
 
-
+done:
   rmp = vl_msg_api_alloc (sizeof (*rmp));
   rmp->_vl_msg_id = ntohs (VL_API_TAP_CREATE_V2_REPLY);
   rmp->context = mp->context;
@@ -145,18 +156,21 @@ vl_api_tap_create_v2_t_handler (vl_api_tap_create_v2_t * mp)
 static void
 vl_api_tap_delete_v2_t_handler (vl_api_tap_delete_v2_t * mp)
 {
+  vl_api_registration_t *reg;
+  reg = vl_api_client_index_to_registration (mp->client_index);
+  if (!reg)
+    return;
+
   vnet_main_t *vnm = vnet_get_main ();
   vlib_main_t *vm = vlib_get_main ();
   int rv;
   vl_api_tap_delete_v2_reply_t *rmp;
-  vl_api_registration_t *reg;
+
   u32 sw_if_index = ntohl (mp->sw_if_index);
 
   rv = tap_delete_if (vm, sw_if_index);
 
-  reg = vl_api_client_index_to_registration (mp->client_index);
-  if (!reg)
-    return;
+
 
   rmp = vl_msg_api_alloc (sizeof (*rmp));
   rmp->_vl_msg_id = ntohs (VL_API_TAP_DELETE_V2_REPLY);
@@ -186,7 +200,7 @@ tap_send_sw_interface_details (vpe_api_main_t * am,
 		    strlen ((const char *) tap_if->dev_name)));
   mp->rx_ring_sz = htons (tap_if->rx_ring_sz);
   mp->tx_ring_sz = htons (tap_if->tx_ring_sz);
-  clib_memcpy (mp->host_mac_addr, tap_if->host_mac_addr, 6);
+  mac_address_encode (&tap_if->host_mac_addr, mp->host_mac_addr);
   clib_memcpy (mp->host_if_name, tap_if->host_if_name,
 	       MIN (ARRAY_LEN (mp->host_if_name) - 1,
 		    strlen ((const char *) tap_if->host_if_name)));
@@ -197,12 +211,14 @@ tap_send_sw_interface_details (vpe_api_main_t * am,
 	       MIN (ARRAY_LEN (mp->host_bridge) - 1,
 		    strlen ((const char *) tap_if->host_bridge)));
   mp->host_mtu_size = htonl (tap_if->host_mtu_size);
+  mac_address_encode (&tap_if->host_mac_addr, mp->host_mac_addr);
+
   if (tap_if->host_ip4_prefix_len)
-    clib_memcpy (&mp->host_ip4_addr, &tap_if->host_ip4_addr, 4);
-  mp->host_ip4_prefix_len = tap_if->host_ip4_prefix_len;
+    ip4_address_encode (&tap_if->host_ip4_addr, mp->host_ip4_prefix.address);
+  mp->host_ip4_prefix.len = tap_if->host_ip4_prefix_len;
   if (tap_if->host_ip6_prefix_len)
-    clib_memcpy (&mp->host_ip6_addr, &tap_if->host_ip6_addr, 16);
-  mp->host_ip6_prefix_len = tap_if->host_ip6_prefix_len;
+    ip6_address_encode (&tap_if->host_ip6_addr, mp->host_ip6_prefix.address);
+  mp->host_ip6_prefix.len = tap_if->host_ip6_prefix_len;
 
   mp->context = context;
   vl_api_send_msg (reg, (u8 *) mp);
@@ -217,10 +233,15 @@ vl_api_sw_interface_tap_v2_dump_t_handler (vl_api_sw_interface_tap_v2_dump_t *
   vl_api_registration_t *reg;
   tap_interface_details_t *tapifs = NULL;
   tap_interface_details_t *tap_if = NULL;
+  u32 filter_sw_if_index;
 
   reg = vl_api_client_index_to_registration (mp->client_index);
   if (!reg)
     return;
+
+  filter_sw_if_index = htonl (mp->sw_if_index);
+  if (filter_sw_if_index != ~0)
+    return;			/* UNIMPLEMENTED */
 
   rv = tap_dump_ifs (&tapifs);
   if (rv)
@@ -249,7 +270,7 @@ tap_setup_message_id_table (api_main_t * am)
 static clib_error_t *
 tapv2_api_hookup (vlib_main_t * vm)
 {
-  api_main_t *am = &api_main;
+  api_main_t *am = vlibapi_get_main ();
 
 #define _(N,n)                                                  \
     vl_msg_api_set_handlers(VL_API_##N, #n,                     \

@@ -21,6 +21,7 @@
 
 #define SESSION_INVALID_INDEX ((u32)~0)
 #define SESSION_INVALID_HANDLE ((u64)~0)
+#define SESSION_CTRL_MSG_MAX_SIZE 84
 
 #define foreach_session_endpoint_fields				\
   foreach_transport_endpoint_cfg_fields				\
@@ -45,6 +46,8 @@ typedef struct _session_endpoint_cfg
   u8 *hostname;
   u64 parent_handle;
   u32 ckpair_index;
+  u8 crypto_engine;
+  u8 flags;
 } session_endpoint_cfg_t;
 
 #define SESSION_IP46_ZERO			\
@@ -134,8 +137,8 @@ typedef enum
   _(CLOSING, "closing")					\
   _(APP_CLOSED, "app-closed")				\
   _(TRANSPORT_CLOSED, "transport-closed")		\
-  _(TRANSPORT_DELETED, "transport-deleted")		\
   _(CLOSED, "closed")					\
+  _(TRANSPORT_DELETED, "transport-deleted")		\
 
 typedef enum
 {
@@ -145,12 +148,26 @@ typedef enum
     SESSION_N_STATES,
 } session_state_t;
 
+#define foreach_session_flag				\
+  _(RX_EVT, "rx-event")					\
+  _(PROXY, "proxy")					\
+  _(CUSTOM_TX, "custom-tx")				\
+  _(IS_MIGRATING, "migrating")				\
+  _(UNIDIRECTIONAL, "unidirectional")			\
+
+typedef enum session_flags_bits_
+{
+#define _(sym, str) SESSION_F_BIT_ ## sym,
+  foreach_session_flag
+#undef _
+  SESSION_N_FLAGS
+} session_flag_bits_t;
+
 typedef enum session_flags_
 {
-  SESSION_F_RX_EVT = 1,
-  SESSION_F_PROXY = (1 << 1),
-  SESSION_F_CUSTOM_TX = (1 << 2),
-  SESSION_F_IS_MIGRATING = (1 << 3),
+#define _(sym, str) SESSION_F_ ## sym = 1 << SESSION_F_BIT_ ## sym,
+  foreach_session_flag
+#undef _
 } session_flags_t;
 
 typedef struct session_
@@ -317,6 +334,8 @@ typedef enum
   SESSION_CTRL_EVT_LISTEN_URI,
   SESSION_CTRL_EVT_UNLISTEN,
   SESSION_CTRL_EVT_APP_DETACH,
+  SESSION_CTRL_EVT_APP_ADD_SEGMENT,
+  SESSION_CTRL_EVT_APP_DEL_SEGMENT,
 } session_evt_type_t;
 
 #define foreach_session_ctrl_evt				\
@@ -338,7 +357,8 @@ typedef enum
   _(WORKER_UPDATE, worker_update)				\
   _(WORKER_UPDATE_REPLY, worker_update_reply)			\
   _(APP_DETACH, app_detach)					\
-
+  _(APP_ADD_SEGMENT, app_add_segment)				\
+  _(APP_DEL_SEGMENT, app_del_segment)				\
 
 /* Deprecated and will be removed. Use types above */
 #define FIFO_EVENT_APP_RX SESSION_IO_EVT_RX

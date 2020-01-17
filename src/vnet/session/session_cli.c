@@ -43,6 +43,52 @@ format_session_fifos (u8 * s, va_list * args)
   return s;
 }
 
+const char *session_state_str[] = {
+#define _(sym, str) str,
+  foreach_session_state
+#undef _
+};
+
+u8 *
+format_session_state (u8 * s, va_list * args)
+{
+  session_t *ss = va_arg (*args, session_t *);
+
+  if (ss->session_state < SESSION_N_STATES)
+    s = format (s, "%s", session_state_str[ss->session_state]);
+  else
+    s = format (s, "UNKNOWN STATE (%d)", ss->session_state);
+
+  return s;
+}
+
+const char *session_flags_str[] = {
+#define _(sym, str) str,
+  foreach_session_flag
+#undef _
+};
+
+u8 *
+format_session_flags (u8 * s, va_list * args)
+{
+  session_t *ss = va_arg (*args, session_t *);
+  int i, last = -1;
+
+  for (i = 0; i < SESSION_N_FLAGS; i++)
+    if (ss->flags & (1 << i))
+      last = i;
+
+  for (i = 0; i < last; i++)
+    {
+      if (ss->flags & (1 << i))
+	s = format (s, "%s, ", session_flags_str[i]);
+    }
+  if (last >= 0)
+    s = format (s, "%s", session_flags_str[last]);
+
+  return s;
+}
+
 /**
  * Format stream session as per the following format
  *
@@ -85,7 +131,12 @@ format_session (u8 * s, va_list * args)
       if (verbose == 1)
 	s = format (s, "%v", str);
       if (verbose > 1)
-	s = format (s, "%U", format_session_fifos, ss, verbose);
+	{
+	  s = format (s, "%U", format_session_fifos, ss, verbose);
+	  s = format (s, " session: state: %U opaque: 0x%x flags: %U\n",
+		      format_session_state, ss, ss->opaque,
+		      format_session_flags, ss);
+	}
     }
   else if (ss->session_state == SESSION_STATE_LISTENING)
     {
@@ -252,7 +303,7 @@ static void
 session_cli_show_all_sessions (vlib_main_t * vm, int verbose)
 {
   session_main_t *smm = &session_main;
-  u32 n_closed = 0, thread_index;
+  u32 n_closed, thread_index;
   session_t *pool, *s;
 
   for (thread_index = 0; thread_index < vec_len (smm->wrk); thread_index++)
@@ -284,6 +335,8 @@ session_cli_show_all_sessions (vlib_main_t * vm, int verbose)
 	vlib_cli_output (vm, "%s%-50s%-15s%-10s%-10s",
 			 thread_index ? "\n" : "",
 			 "Connection", "State", "Rx-f", "Tx-f");
+
+      n_closed = 0;
 
       /* *INDENT-OFF* */
       pool_foreach(s, pool, ({

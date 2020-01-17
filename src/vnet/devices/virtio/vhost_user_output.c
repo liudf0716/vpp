@@ -44,6 +44,7 @@
 #include <vnet/devices/virtio/vhost_user.h>
 #include <vnet/devices/virtio/vhost_user_inline.h>
 
+#include <vnet/gso/gso.h>
 /*
  * On the transmit side, we keep processing the buffers from vlib in the while
  * loop and prepare the copy order to be executed later. However, the static
@@ -51,9 +52,12 @@
  * entries. In order to not corrupt memory, we have to do the copy when the
  * static array reaches the copy threshold. We subtract 40 in case the code
  * goes into the inner loop for a maximum of 64k frames which may require
- * more array entries.
+ * more array entries. We subtract 200 because our default buffer size is
+ * 2048 and the default desc len is likely 1536. While it takes less than 40
+ * vlib buffers for the jumbo frame, it may take twice as much descriptors
+ * for the same jumbo frame. Use 200 for the extra head room.
  */
-#define VHOST_USER_TX_COPY_THRESHOLD (VHOST_USER_COPY_ARRAY_N - 40)
+#define VHOST_USER_TX_COPY_THRESHOLD (VHOST_USER_COPY_ARRAY_N - 200)
 
 extern vnet_device_class_t vhost_user_device_class;
 
@@ -232,17 +236,28 @@ static_always_inline void
 vhost_user_handle_tx_offload (vhost_user_intf_t * vui, vlib_buffer_t * b,
 			      virtio_net_hdr_t * hdr)
 {
+  gso_header_offset_t gho =
+    vnet_gso_header_offset_parser (b, b->flags & VNET_BUFFER_F_IS_IP6);
+  if (b->flags & VNET_BUFFER_F_OFFLOAD_IP_CKSUM)
+    {
+      ip4_header_t *ip4;
+
+      ip4 =
+	(ip4_header_t *) (vlib_buffer_get_current (b) + gho.l3_hdr_offset);
+      ip4->checksum = ip4_header_checksum (ip4);
+    }
+
   /* checksum offload */
   if (b->flags & VNET_BUFFER_F_OFFLOAD_UDP_CKSUM)
     {
       hdr->flags = VIRTIO_NET_HDR_F_NEEDS_CSUM;
-      hdr->csum_start = vnet_buffer (b)->l4_hdr_offset;
+      hdr->csum_start = gho.l4_hdr_offset;
       hdr->csum_offset = offsetof (udp_header_t, checksum);
     }
   else if (b->flags & VNET_BUFFER_F_OFFLOAD_TCP_CKSUM)
     {
       hdr->flags = VIRTIO_NET_HDR_F_NEEDS_CSUM;
-      hdr->csum_start = vnet_buffer (b)->l4_hdr_offset;
+      hdr->csum_start = gho.l4_hdr_offset;
       hdr->csum_offset = offsetof (tcp_header_t, checksum);
     }
 
@@ -390,6 +405,7 @@ retry:
 	  vhost_user_handle_tx_offload (vui, b0, &hdr->hdr);
 
 	// Prepare a copy order executed later for the header
+	ASSERT (copy_len < VHOST_USER_COPY_ARRAY_N);
 	vhost_copy_t *cpy = &cpu->copy[copy_len];
 	copy_len++;
 	cpy->len = vui->virtio_net_hdr_sz;
@@ -477,6 +493,7 @@ retry:
 	    }
 
 	  {
+	    ASSERT (copy_len < VHOST_USER_COPY_ARRAY_N);
 	    vhost_copy_t *cpy = &cpu->copy[copy_len];
 	    copy_len++;
 	    cpy->len = bytes_left;
@@ -566,7 +583,7 @@ done:
    * retry.
    * The idea is that it is better to waste some time on packets
    * that have been processed already than dropping them and get
-   * more fresh packets with a good likelyhood that they will be dropped too.
+   * more fresh packets with a good likelihood that they will be dropped too.
    * This technique also gives more time to VM driver to pick-up packets.
    * In case the traffic flows from physical to virtual interfaces, this
    * technique will end-up leveraging the physical NIC buffer in order to

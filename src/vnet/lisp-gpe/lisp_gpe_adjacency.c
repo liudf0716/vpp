@@ -99,9 +99,9 @@ lisp_gpe_adj_get_fib_chain_type (const lisp_gpe_adjacency_t * ladj)
 {
   switch (ip_addr_version (&ladj->remote_rloc))
     {
-    case IP4:
+    case AF_IP4:
       return (FIB_FORW_CHAIN_TYPE_UNICAST_IP4);
-    case IP6:
+    case AF_IP6:
       return (FIB_FORW_CHAIN_TYPE_UNICAST_IP6);
     default:
       ASSERT (0);
@@ -116,11 +116,11 @@ ip46_address_to_ip_address (const ip46_address_t * a, ip_address_t * b)
   if (ip46_address_is_ip4 (a))
     {
       clib_memset (b, 0, sizeof (*b));
-      ip_address_set (b, &a->ip4, IP4);
+      ip_address_set (b, &a->ip4, AF_IP4);
     }
   else
     {
-      ip_address_set (b, &a->ip6, IP6);
+      ip_address_set (b, &a->ip6, AF_IP6);
     }
 }
 
@@ -206,7 +206,8 @@ lisp_afi_from_vnet_link_type (vnet_link_t link)
 }
 
 static void
-lisp_gpe_increment_stats_counters (lisp_cp_main_t * lcm, ip_adjacency_t * adj,
+lisp_gpe_increment_stats_counters (lisp_cp_main_t * lcm,
+				   const ip_adjacency_t * adj,
 				   vlib_buffer_t * b)
 {
   lisp_gpe_main_t *lgm = vnet_lisp_gpe_get_main ();
@@ -273,7 +274,8 @@ lisp_gpe_increment_stats_counters (lisp_cp_main_t * lcm, ip_adjacency_t * adj,
 
 static void
 lisp_gpe_fixup (vlib_main_t * vm,
-		ip_adjacency_t * adj, vlib_buffer_t * b, const void *data)
+		const ip_adjacency_t * adj,
+		vlib_buffer_t * b, const void *data)
 {
   lisp_cp_main_t *lcm = vnet_lisp_cp_get_main ();
 

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import socket
 import unittest
@@ -9,7 +9,6 @@ from scapy.layers.l2 import Ether
 from scapy.layers.inet import IP, UDP
 from vpp_bond_interface import VppBondInterface
 from vpp_papi import MACAddress
-from vpp_ip import VppIpPrefix
 
 
 class TestBondInterface(VppTestCase):
@@ -73,7 +72,7 @@ class TestBondInterface(VppTestCase):
         bond0.admin_up()
         self.vapi.sw_interface_add_del_address(
             sw_if_index=bond0.sw_if_index,
-            prefix=VppIpPrefix("10.10.10.1", 24).encode())
+            prefix="10.10.10.1/24")
 
         self.pg2.config_ip4()
         self.pg2.resolve_arp()
@@ -82,7 +81,7 @@ class TestBondInterface(VppTestCase):
 
         self.logger.info(self.vapi.cli("show interface"))
         self.logger.info(self.vapi.cli("show interface address"))
-        self.logger.info(self.vapi.cli("show ip arp"))
+        self.logger.info(self.vapi.cli("show ip neighbors"))
 
         # enslave pg0 and pg1 to BondEthernet0
         self.logger.info("bond enslave interface pg0 to BondEthernet0")
@@ -100,7 +99,7 @@ class TestBondInterface(VppTestCase):
         p2 = (Ether(src=bond0_mac, dst=self.pg2.local_mac) /
               IP(src=self.pg2.local_ip4, dst="10.10.10.12") /
               UDP(sport=1235, dport=1235) /
-              Raw('\xa5' * 100))
+              Raw(b'\xa5' * 100))
         self.pg2.add_stream(p2)
 
         # generate a packet from pg3 -> BondEthernet0 -> pg0
@@ -109,7 +108,7 @@ class TestBondInterface(VppTestCase):
         p3 = (Ether(src=bond0_mac, dst=self.pg3.local_mac) /
               IP(src=self.pg3.local_ip4, dst="10.10.10.11") /
               UDP(sport=1234, dport=1234) /
-              Raw('\xa5' * 100))
+              Raw(b'\xa5' * 100))
         self.pg3.add_stream(p3)
 
         self.pg_enable_capture(self.pg_interfaces)
@@ -117,9 +116,9 @@ class TestBondInterface(VppTestCase):
         # set up the static arp entries pointing to the BondEthernet0 interface
         # so that it does not try to resolve the ip address
         self.logger.info(self.vapi.cli(
-            "set ip arp static BondEthernet0 10.10.10.12 abcd.abcd.0002"))
+            "set ip neighbor static BondEthernet0 10.10.10.12 abcd.abcd.0002"))
         self.logger.info(self.vapi.cli(
-            "set ip arp static BondEthernet0 10.10.10.11 abcd.abcd.0004"))
+            "set ip neighbor static BondEthernet0 10.10.10.11 abcd.abcd.0004"))
 
         # clear the interface counters
         self.logger.info(self.vapi.cli("clear interfaces"))

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import unittest
 import socket
@@ -84,7 +84,6 @@ class TestSRMPLS(VppTestCase):
         for i in self.pg_interfaces:
             i.unconfig_ip4()
             i.unconfig_ip6()
-            i.ip6_disable()
             i.disable_mpls()
             i.admin_down()
         super(TestSRMPLS, self).tearDown()

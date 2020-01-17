@@ -272,26 +272,26 @@ send_sw_interface_details (vpe_api_main_t * am,
       mp->sub_inner_vlan_id = ntohs (sub->eth.inner_vlan_id);
       mp->sub_if_flags =
 	ntohl (sub->eth.raw_flags & SUB_IF_API_FLAG_MASK_VNET);
+    }
 
-      /* vlan tag rewrite data */
-      u32 vtr_op = L2_VTR_DISABLED;
-      u32 vtr_push_dot1q = 0, vtr_tag1 = 0, vtr_tag2 = 0;
+  /* vlan tag rewrite data */
+  u32 vtr_op = L2_VTR_DISABLED;
+  u32 vtr_push_dot1q = 0, vtr_tag1 = 0, vtr_tag2 = 0;
 
-      if (l2vtr_get (am->vlib_main, am->vnet_main, swif->sw_if_index,
-		     &vtr_op, &vtr_push_dot1q, &vtr_tag1, &vtr_tag2) != 0)
-	{
-	  // error - default to disabled
-	  mp->vtr_op = ntohl (L2_VTR_DISABLED);
-	  clib_warning ("cannot get vlan tag rewrite for sw_if_index %d",
-			swif->sw_if_index);
-	}
-      else
-	{
-	  mp->vtr_op = ntohl (vtr_op);
-	  mp->vtr_push_dot1q = ntohl (vtr_push_dot1q);
-	  mp->vtr_tag1 = ntohl (vtr_tag1);
-	  mp->vtr_tag2 = ntohl (vtr_tag2);
-	}
+  if (l2vtr_get (am->vlib_main, am->vnet_main, swif->sw_if_index,
+		 &vtr_op, &vtr_push_dot1q, &vtr_tag1, &vtr_tag2) != 0)
+    {
+      // error - default to disabled
+      mp->vtr_op = ntohl (L2_VTR_DISABLED);
+      clib_warning ("cannot get vlan tag rewrite for sw_if_index %d",
+		    swif->sw_if_index);
+    }
+  else
+    {
+      mp->vtr_op = ntohl (vtr_op);
+      mp->vtr_push_dot1q = ntohl (vtr_push_dot1q);
+      mp->vtr_tag1 = ntohl (vtr_tag1);
+      mp->vtr_tag2 = ntohl (vtr_tag2);
     }
 
   /* pbb tag rewrite data */
@@ -358,9 +358,8 @@ vl_api_sw_interface_dump_t_handler (vl_api_sw_interface_dump_t * mp)
 
   if (mp->name_filter_valid)
     {
-      filter =
-	format (0, ".*%s", vl_api_string_len (&mp->name_filter),
-		vl_api_from_api_string (&mp->name_filter), 0);
+      filter = vl_api_from_api_to_vec (&mp->name_filter);
+      vec_add1 (filter, 0);	/* Ensure it's a C string for strcasecmp() */
     }
 
   char *strcasestr (char *, char *);	/* lnx hdr file botch */
@@ -829,8 +828,9 @@ link_up_down_function (vnet_main_t * vm, u32 hw_if_index, u32 flags)
 
   if (vam->link_state_process_up)
     {
-      enum api_events event =
-	flags ? API_LINK_STATE_UP_EVENT : API_LINK_STATE_DOWN_EVENT;
+      enum api_events event = ((flags & VNET_HW_INTERFACE_FLAG_LINK_UP) ?
+			       API_LINK_STATE_UP_EVENT :
+			       API_LINK_STATE_DOWN_EVENT);
       vlib_process_signal_event (vam->vlib_main,
 				 link_state_process_node.index, event,
 				 hi->sw_if_index);
@@ -850,8 +850,8 @@ admin_up_down_function (vnet_main_t * vm, u32 sw_if_index, u32 flags)
    */
   if (vam->link_state_process_up)
     {
-      enum api_events event =
-	flags ? API_ADMIN_UP_EVENT : API_ADMIN_DOWN_EVENT;
+      enum api_events event = ((flags & VNET_SW_INTERFACE_FLAG_ADMIN_UP) ?
+			       API_ADMIN_UP_EVENT : API_ADMIN_DOWN_EVENT);
       vlib_process_signal_event (vam->vlib_main,
 				 link_state_process_node.index, event,
 				 sw_if_index);
@@ -1243,74 +1243,30 @@ vl_api_create_subif_t_handler (vl_api_create_subif_t * mp)
 {
   vl_api_create_subif_reply_t *rmp;
   vnet_main_t *vnm = vnet_get_main ();
-  u32 sw_if_index = ~0;
-  int rv = 0;
-  u32 sub_id;
-  vnet_sw_interface_t *si;
+  u32 sub_sw_if_index = ~0;
   vnet_hw_interface_t *hi;
-  vnet_sw_interface_t template;
-  uword *p;
-  vnet_interface_main_t *im = &vnm->interface_main;
-  u64 sup_and_sub_key;
-  clib_error_t *error;
+  int rv = 0;
 
   VALIDATE_SW_IF_INDEX (mp);
 
-  si = vnet_get_sup_sw_interface (vnm, ntohl (mp->sw_if_index));
   hi = vnet_get_sup_hw_interface (vnm, ntohl (mp->sw_if_index));
 
   if (hi->bond_info == VNET_HW_INTERFACE_BOND_INFO_SLAVE)
-    {
-      rv = VNET_API_ERROR_BOND_SLAVE_NOT_ALLOWED;
-      goto out;
-    }
-
-  sw_if_index = si->sw_if_index;
-  sub_id = ntohl (mp->sub_id);
-
-  sup_and_sub_key = ((u64) (sw_if_index) << 32) | (u64) sub_id;
-
-  p = hash_get_mem (im->sw_if_index_by_sup_and_sub, &sup_and_sub_key);
-  if (p)
-    {
-      if (CLIB_DEBUG > 0)
-	clib_warning ("sup sw_if_index %d, sub id %d already exists\n",
-		      sw_if_index, sub_id);
-      rv = VNET_API_ERROR_SUBIF_ALREADY_EXISTS;
-      goto out;
-    }
-
-  clib_memset (&template, 0, sizeof (template));
-  template.type = VNET_SW_INTERFACE_TYPE_SUB;
-  template.flood_class = VNET_FLOOD_CLASS_NORMAL;
-  template.sup_sw_if_index = sw_if_index;
-  template.sub.id = sub_id;
-  template.sub.eth.raw_flags = ntohl (mp->sub_if_flags);
-  template.sub.eth.outer_vlan_id = ntohs (mp->outer_vlan_id);
-  template.sub.eth.inner_vlan_id = ntohs (mp->inner_vlan_id);
-
-  error = vnet_create_sw_interface (vnm, &template, &sw_if_index);
-  if (error)
-    {
-      clib_error_report (error);
-      rv = VNET_API_ERROR_SUBIF_CREATE_FAILED;
-      goto out;
-    }
-
-  u64 *kp = clib_mem_alloc (sizeof (*kp));
-  *kp = sup_and_sub_key;
-
-  hash_set (hi->sub_interface_sw_if_index_by_id, sub_id, sw_if_index);
-  hash_set_mem (im->sw_if_index_by_sup_and_sub, kp, sw_if_index);
+    rv = VNET_API_ERROR_BOND_SLAVE_NOT_ALLOWED;
+  else
+    rv = vnet_create_sub_interface (ntohl (mp->sw_if_index),
+				    ntohl (mp->sub_id),
+				    ntohl (mp->sub_if_flags),
+				    ntohs (mp->inner_vlan_id),
+				    ntohs (mp->outer_vlan_id),
+				    &sub_sw_if_index);
 
   BAD_SW_IF_INDEX_LABEL;
-
-out:
 
   /* *INDENT-OFF* */
   REPLY_MACRO2(VL_API_CREATE_SUBIF_REPLY,
   ({
-    rmp->sw_if_index = ntohl(sw_if_index);
+    rmp->sw_if_index = ntohl(sub_sw_if_index);
   }));
   /* *INDENT-ON* */
 }
@@ -1435,7 +1391,7 @@ pub_sub_handler (interface_events, INTERFACE_EVENTS);
 static clib_error_t *
 interface_api_hookup (vlib_main_t * vm)
 {
-  api_main_t *am = &api_main;
+  api_main_t *am = vlibapi_get_main ();
 
 #define _(N,n)                                                  \
     vl_msg_api_set_handlers(VL_API_##N, #n,                     \

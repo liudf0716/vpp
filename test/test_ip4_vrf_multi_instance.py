@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """IP4 VRF Multi-instance Test Case HLD:
 
 **NOTES:**
@@ -68,8 +68,8 @@ import socket
 
 import scapy.compat
 from scapy.packet import Raw
-from scapy.layers.l2 import Ether
-from scapy.layers.inet import IP, UDP, ARP
+from scapy.layers.l2 import Ether, ARP
+from scapy.layers.inet import IP, UDP
 
 from framework import VppTestCase, VppTestRunner
 from util import ppp
@@ -108,7 +108,7 @@ class TestIp4VrfMultiInst(VppTestCase):
             # Packet flows mapping pg0 -> pg1, pg2 etc.
             cls.flows = dict()
             for i in range(len(cls.pg_interfaces)):
-                multiplicand = i / cls.pg_ifs_per_vrf
+                multiplicand = i // cls.pg_ifs_per_vrf
                 pg_list = [
                     cls.pg_interfaces[multiplicand * cls.pg_ifs_per_vrf + j]
                     for j in range(cls.pg_ifs_per_vrf)
@@ -167,7 +167,7 @@ class TestIp4VrfMultiInst(VppTestCase):
 
     def show_commands_at_teardown(self):
         self.logger.info(self.vapi.ppcli("show ip fib"))
-        self.logger.info(self.vapi.ppcli("show ip arp"))
+        self.logger.info(self.vapi.ppcli("show ip4 neighbors"))
 
     def create_vrf_and_assign_interfaces(self, count, start=1):
         """
@@ -184,7 +184,7 @@ class TestIp4VrfMultiInst(VppTestCase):
             pg_if = self.pg_if_by_vrf_id[vrf_id][0]
             dest_addr = pg_if.local_ip4n
             dest_addr_len = 24
-            self.vapi.ip_table_add_del(is_add=1, table_id=vrf_id)
+            self.vapi.ip_table_add_del(is_add=1, table={'table_id': vrf_id})
             self.logger.info("IPv4 VRF ID %d created" % vrf_id)
             if vrf_id not in self.vrf_list:
                 self.vrf_list.append(vrf_id)
@@ -202,7 +202,7 @@ class TestIp4VrfMultiInst(VppTestCase):
                 pg_if.config_ip4()
                 pg_if.configure_ipv4_neighbors()
         self.logger.debug(self.vapi.ppcli("show ip fib"))
-        self.logger.debug(self.vapi.ppcli("show ip arp"))
+        self.logger.debug(self.vapi.ppcli("show ip4 neighbors"))
 
     def reset_vrf_and_remove_from_vrf_list(self, vrf_id):
         """
@@ -210,8 +210,7 @@ class TestIp4VrfMultiInst(VppTestCase):
 
         :param int vrf_id: The FIB table / VRF ID to be reset.
         """
-        # self.vapi.reset_vrf(vrf_id, is_ipv6=0)
-        self.vapi.reset_fib(vrf_id, is_ipv6=0)
+        self.vapi.ip_table_flush(table={'table_id': vrf_id})
         if vrf_id in self.vrf_list:
             self.vrf_list.remove(vrf_id)
         if vrf_id not in self.vrf_reset_list:
@@ -225,8 +224,8 @@ class TestIp4VrfMultiInst(VppTestCase):
                 self.pg_not_in_vrf.append(pg_if)
         self.logger.info("IPv4 VRF ID %d reset finished" % vrf_id)
         self.logger.debug(self.vapi.ppcli("show ip fib"))
-        self.logger.debug(self.vapi.ppcli("show ip arp"))
-        self.vapi.ip_table_add_del(is_add=0, table_id=vrf_id)
+        self.logger.debug(self.vapi.ppcli("show ip neighbors"))
+        self.vapi.ip_table_add_del(is_add=0, table={'table_id': vrf_id})
 
     def create_stream(self, src_if, packet_sizes):
         """
@@ -351,12 +350,6 @@ class TestIp4VrfMultiInst(VppTestCase):
                         vrf_count += 1
                         found = True
                         break
-                    for host in pg_if.remote_hosts:
-                        if scapy.compat.raw(addr) == \
-                                scapy.compat.raw(host.ip4):
-                            vrf_count += 1
-                            found = True
-                            break
         if not vrf_exist and vrf_count == 0:
             self.logger.info("IPv4 VRF ID %d is not configured" % vrf_id)
             return VRFState.not_configured

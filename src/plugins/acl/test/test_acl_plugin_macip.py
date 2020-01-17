@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 from __future__ import print_function
 """ACL plugin - MACIP tests
 """
@@ -218,7 +218,7 @@ class MethodHolder(VppTestCase):
                 ip6 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
                 prefix_len4 = 0
                 prefix_len6 = 0
-                rules_count[(acl / 2) - 1] = 1
+                rules_count[int((acl / 2) - 1)] = 1
             else:
                 prefix_len4 = 24
                 prefix_len6 = 64
@@ -235,7 +235,7 @@ class MethodHolder(VppTestCase):
             ip = ip6 if is_ip6 else ip4
             ip_len = prefix_len6 if is_ip6 else prefix_len4
 
-            for i in range(0, rules_count[(acl / 2) - 1]):
+            for i in range(0, (rules_count[int((acl / 2) - 1)])):
                 src_mac += 16777217
                 if mac_type == self.WILD_MAC:
                     mac = "00:00:00:00:00:00"
@@ -442,7 +442,7 @@ class MethodHolder(VppTestCase):
 
             packet /= UDP(sport=src_port, dport=dst_port)/Raw(payload)
 
-            packet[Raw].load += b" mac:%s" % scapy.compat.raw(src_mac)
+            packet[Raw].load += b" mac:%s" % src_mac.encode('utf-8')
 
             size = self.pg_if_packet_sizes[p % len(self.pg_if_packet_sizes)]
             if isinstance(src_if, VppSubInterface):

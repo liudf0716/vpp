@@ -211,6 +211,8 @@ typedef struct vppcom_cfg_t_
   char *event_log_path;
   u8 *vpp_api_filename;
   u8 *vpp_api_socket_name;
+  u8 *vpp_api_chroot;
+  u32 tls_engine;
 } vppcom_cfg_t;
 
 void vppcom_cfg (vppcom_cfg_t * vcl_cfg);
@@ -297,6 +299,9 @@ typedef struct vcl_worker_
 
   u32 forked_child;
 
+  socket_client_main_t bapi_sock_ctx;
+  memory_client_main_t bapi_shm_ctx;
+  api_main_t bapi_api_ctx;
 } vcl_worker_t;
 
 typedef struct vppcom_main_t_
@@ -513,6 +518,14 @@ vcl_session_is_ct (vcl_session_t * s)
 }
 
 static inline u8
+vcl_session_is_cl (vcl_session_t * s)
+{
+  if (s->session_type == VPPCOM_PROTO_UDP)
+    return 1;
+  return 0;
+}
+
+static inline u8
 vcl_session_is_open (vcl_session_t * s)
 {
   return ((s->session_state & STATE_OPEN)
@@ -620,6 +633,10 @@ void vppcom_send_application_tls_key_add (vcl_session_t * session, char *key,
 					  u32 key_len);
 void vcl_send_app_worker_add_del (u8 is_add);
 void vcl_send_child_worker_del (vcl_worker_t * wrk);
+
+int vcl_segment_attach (u64 segment_handle, char *name,
+			ssvm_segment_type_t type, int fd);
+void vcl_segment_detach (u64 segment_handle);
 
 u32 vcl_max_nsid_len (void);
 

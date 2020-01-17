@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """ CDP tests """
 
 from scapy.packet import Packet
@@ -13,6 +13,8 @@ from re import compile
 from time import sleep
 from util import ppp
 import platform
+import sys
+import unittest
 
 
 """ TestCDP is a subclass of  VPPTestCase classes.

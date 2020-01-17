@@ -20,6 +20,9 @@
 
 #include <infiniband/verbs.h>
 #include <vlib/log.h>
+#include <vlib/pci/pci.h>
+#include <vnet/interface.h>
+#include <vnet/ethernet/mac_address.h>
 
 #define foreach_rdma_device_flags \
   _(0, ERROR, "error") \
@@ -94,9 +97,17 @@ typedef struct
 {
   rdma_device_t *devices;
   vlib_log_class_t log_class;
+  u16 msg_id_base;
 } rdma_main_t;
 
 extern rdma_main_t rdma_main;
+
+typedef enum
+{
+  RDMA_MODE_AUTO = 0,
+  RDMA_MODE_IBV,
+  RDMA_MODE_DV,
+} rdma_mode_t;
 
 typedef struct
 {
@@ -105,6 +116,7 @@ typedef struct
   u32 rxq_size;
   u32 txq_size;
   u32 rxq_num;
+  rdma_mode_t mode;
 
   /* return */
   int rv;
@@ -118,10 +130,10 @@ void rdma_delete_if (vlib_main_t * vm, rdma_device_t * rd);
 extern vlib_node_registration_t rdma_input_node;
 extern vnet_device_class_t rdma_device_class;
 
-/* format.c */
 format_function_t format_rdma_device;
 format_function_t format_rdma_device_name;
 format_function_t format_rdma_input_trace;
+unformat_function_t unformat_rdma_create_if_args;
 
 typedef struct
 {

@@ -325,7 +325,7 @@ these data to easily filter/track single packets as they traverse the
 forwarding graph.
 
 Multiple records per packet are normal, and to be expected. Packets
-will appear multipe times as they traverse the vpp forwarding
+will appear multiple times as they traverse the vpp forwarding
 graph. In this way, vpp graph dispatch traces are significantly
 different from regular network packet captures from an end-station.
 This property complicates stateful packet analysis.
@@ -494,7 +494,7 @@ These commands have the following optional parameters:
   capture is off.
 
 - <b>max-bytes-per-pkt _nnnn_</b> - maximum number of bytes to trace
-  on a per-paket basis. Must be >32 and less than 9000. Default value:
+  on a per-packet basis. Must be >32 and less than 9000. Default value:
   512.
 
 - <b>filter</b> - Use the pcap rx / tx / drop trace filter, which must
@@ -526,10 +526,10 @@ These commands have the following optional parameters:
 
 ## packet trace capture filtering
 
-The "classify filter pcap | <interface-name> " debug CLI command
+The "classify filter pcap | <interface-name> | trace" debug CLI command
 constructs an arbitrary set of packet classifier tables for use with
 "pcap rx | tx | drop trace," and with the vpp packet tracer on a
-per-interrface basis.
+per-interface or system-wide basis.
 
 Packets which match a rule in the classifier table chain will be
 traced. The tables are automatically ordered so that matches in the
@@ -538,7 +538,7 @@ most specific table are tried first.
 It's reasonably likely that folks will configure a single table with
 one or two matches. As a result, we configure 8 hash buckets and 128K
 of match rule space by default. One can override the defaults by
-specifiying "buckets <nnn>" and "memory-size <xxx>" as desired.
+specifying "buckets <nnn>" and "memory-size <xxx>" as desired.
 
 To build up complex filter chains, repeatedly issue the classify
 filter debug CLI command. Each command must specify the desired mask
@@ -549,28 +549,43 @@ not, the CLI command add a new table and the indicated mask rule
 ### Configure a simple pcap classify filter
 
 ```
-    classify filter pcap mask l3 ip4 src match l3 ip4 src 192.168.1.11"
-    pcap rx trace on max 100 filter
+    classify filter pcap mask l3 ip4 src match l3 ip4 src 192.168.1.11
+    pcap trace rx max 100 filter
 ```
 
-### Configure a simple interface packet-tracer filter
+### Configure a simple per-interface capture filter
 
 ```
     classify filter GigabitEthernet3/0/0 mask l3 ip4 src match l3 ip4 src 192.168.1.11"
-    [device-driver debug CLI TBD]
+    pcap trace rx max 100 intfc GigabitEthernet3/0/0
+```
+
+Note that per-interface capture filters are _always_ applied.
+
+### Clear per-interface capture filters
+
+```
+    classify filter GigabitEthernet3/0/0 del
 ```
 
 ### Configure another fairly simple pcap classify filter
 
 ```
    classify filter pcap mask l3 ip4 src dst match l3 ip4 src 192.168.1.10 dst 192.168.2.10
-   pcap tx trace on max 100 filter
+   pcap trace tx max 100 filter
+```
+
+### Configure a vpp packet tracer filter
+
+```
+   classify filter trace mask l3 ip4 src dst match l3 ip4 src 192.168.1.10 dst 192.168.2.10
+   trace add dpdk-input 100 filter
 ```
 
 ### Clear all current classifier filters
 
 ```
-    classify filter del
+    classify filter [pcap | <interface> | trace] del
 ```
 
 ### To inspect the classifier tables

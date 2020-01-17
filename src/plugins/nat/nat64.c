@@ -19,10 +19,11 @@
 
 #include <nat/nat64.h>
 #include <nat/nat64_db.h>
-#include <nat/nat_reass.h>
 #include <nat/nat_inlines.h>
 #include <vnet/fib/ip4_fib.h>
 #include <vppinfra/crc32.h>
+#include <vnet/ip/reass/ip4_sv_reass.h>
+#include <vnet/ip/reass/ip6_sv_reass.h>
 
 
 nat64_main_t nat64_main;
@@ -34,21 +35,25 @@ VNET_FEATURE_INIT (nat64_in2out, static) = {
   .arc_name = "ip6-unicast",
   .node_name = "nat64-in2out",
   .runs_before = VNET_FEATURES ("ip6-lookup"),
+  .runs_after = VNET_FEATURES ("ip6-sv-reassembly-feature"),
 };
 VNET_FEATURE_INIT (nat64_out2in, static) = {
   .arc_name = "ip4-unicast",
   .node_name = "nat64-out2in",
   .runs_before = VNET_FEATURES ("ip4-lookup"),
+  .runs_after = VNET_FEATURES ("ip4-sv-reassembly-feature"),
 };
 VNET_FEATURE_INIT (nat64_in2out_handoff, static) = {
   .arc_name = "ip6-unicast",
   .node_name = "nat64-in2out-handoff",
   .runs_before = VNET_FEATURES ("ip6-lookup"),
+  .runs_after = VNET_FEATURES ("ip6-sv-reassembly-feature"),
 };
 VNET_FEATURE_INIT (nat64_out2in_handoff, static) = {
   .arc_name = "ip4-unicast",
   .node_name = "nat64-out2in-handoff",
   .runs_before = VNET_FEATURES ("ip4-lookup"),
+  .runs_after = VNET_FEATURES ("ip4-sv-reassembly-feature"),
 };
 
 
@@ -120,7 +125,7 @@ nat64_get_worker_in2out (ip6_address_t * addr)
 }
 
 u32
-nat64_get_worker_out2in (ip4_header_t * ip)
+nat64_get_worker_out2in (vlib_buffer_t * b, ip4_header_t * ip)
 {
   nat64_main_t *nm = &nat64_main;
   snat_main_t *sm = nm->sm;
@@ -132,41 +137,6 @@ nat64_get_worker_out2in (ip4_header_t * ip)
   udp = ip4_next_header (ip);
   port = udp->dst_port;
 
-  /* fragments */
-  if (PREDICT_FALSE (ip4_is_fragment (ip)))
-    {
-      if (PREDICT_FALSE (nat_reass_is_drop_frag (0)))
-	return vlib_get_thread_index ();
-
-      nat_reass_ip4_t *reass;
-      reass = nat_ip4_reass_find (ip->src_address, ip->dst_address,
-				  ip->fragment_id, ip->protocol);
-
-      if (reass && (reass->thread_index != (u32) ~ 0))
-	return reass->thread_index;
-
-      if (ip4_is_first_fragment (ip))
-	{
-	  reass =
-	    nat_ip4_reass_create (ip->src_address, ip->dst_address,
-				  ip->fragment_id, ip->protocol);
-	  if (!reass)
-	    goto no_reass;
-
-	  port = clib_net_to_host_u16 (port);
-	  if (port > 1024)
-	    reass->thread_index =
-	      nm->sm->first_worker_index +
-	      ((port - 1024) / sm->port_per_thread);
-	  else
-	    reass->thread_index = vlib_get_thread_index ();
-	  return reass->thread_index;
-	}
-      else
-	return vlib_get_thread_index ();
-    }
-
-no_reass:
   /* unknown protocol */
   if (PREDICT_FALSE (proto == ~0))
     {
@@ -193,10 +163,12 @@ no_reass:
     {
       icmp46_header_t *icmp = (icmp46_header_t *) udp;
       icmp_echo_header_t *echo = (icmp_echo_header_t *) (icmp + 1);
-      if (!icmp_is_error_message (icmp))
-	port = echo->identifier;
+      if (!icmp_type_is_error_message
+	  (vnet_buffer (b)->ip.reass.icmp_type_or_tcp_flags))
+	port = vnet_buffer (b)->ip.reass.l4_src_port;
       else
 	{
+	  /* if error message, then it's not fragmented and we can access it */
 	  ip4_header_t *inner_ip = (ip4_header_t *) (echo + 1);
 	  proto = ip_proto_to_snat_proto (inner_ip->protocol);
 	  void *l4_header = ip4_next_header (inner_ip);
@@ -249,14 +221,8 @@ nat64_init (vlib_main_t * vm)
   node = vlib_get_node_by_name (vm, (u8 *) "nat64-in2out-slowpath");
   nm->in2out_slowpath_node_index = node->index;
 
-  node = vlib_get_node_by_name (vm, (u8 *) "nat64-in2out-reass");
-  nm->in2out_reass_node_index = node->index;
-
   node = vlib_get_node_by_name (vm, (u8 *) "nat64-out2in");
   nm->out2in_node_index = node->index;
-
-  node = vlib_get_node_by_name (vm, (u8 *) "nat64-out2in-reass");
-  nm->out2in_reass_node_index = node->index;
 
   /* set session timeouts to default values */
   nm->udp_timeout = SNAT_UDP_TIMEOUT;
@@ -343,7 +309,7 @@ nat64_add_del_pool_addr (u32 thread_index,
       if (vrf_id != ~0)
 	a->fib_index =
 	  fib_table_find_or_create_and_lock (FIB_PROTOCOL_IP6, vrf_id,
-					     FIB_SOURCE_PLUGIN_HI);
+					     nat_fib_src_hi);
 #define _(N, id, n, s) \
       clib_bitmap_alloc (a->busy_##n##_port_bitmap, 65535); \
       a->busy_##n##_ports = 0; \
@@ -357,8 +323,7 @@ nat64_add_del_pool_addr (u32 thread_index,
 	return VNET_API_ERROR_NO_SUCH_ENTRY;
 
       if (a->fib_index != ~0)
-	fib_table_unlock (a->fib_index, FIB_PROTOCOL_IP6,
-			  FIB_SOURCE_PLUGIN_HI);
+	fib_table_unlock (a->fib_index, FIB_PROTOCOL_IP6, nat_fib_src_hi);
       /* Delete sessions using address */
         /* *INDENT-OFF* */
         vec_foreach (db, nm->db)
@@ -529,6 +494,19 @@ nat64_add_del_interface (u32 sw_if_index, u8 is_inside, u8 is_add)
 
   arc_name = is_inside ? "ip6-unicast" : "ip4-unicast";
 
+  if (is_inside)
+    {
+      int rv = ip6_sv_reass_enable_disable_with_refcnt (sw_if_index, is_add);
+      if (rv)
+	return rv;
+    }
+  else
+    {
+      int rv = ip4_sv_reass_enable_disable_with_refcnt (sw_if_index, is_add);
+      if (rv)
+	return rv;
+    }
+
   return vnet_feature_enable_disable (arc_name, feature_name, sw_if_index,
 				      is_add, 0, 0);
 }
@@ -688,7 +666,7 @@ nat64_add_del_static_bib_entry (ip6_address_t * in_addr,
   nat64_main_t *nm = &nat64_main;
   nat64_db_bib_entry_t *bibe;
   u32 fib_index = fib_table_find_or_create_and_lock (FIB_PROTOCOL_IP6, vrf_id,
-						     FIB_SOURCE_PLUGIN_HI);
+						     nat_fib_src_hi);
   snat_protocol_t p = ip_proto_to_snat_proto (proto);
   ip46_address_t addr;
   int i;
@@ -1027,7 +1005,7 @@ nat64_add_del_prefix (ip6_address_t * prefix, u8 plen, u32 vrf_id, u8 is_add)
 	  vec_add2 (nm->pref64, p, 1);
 	  p->fib_index =
 	    fib_table_find_or_create_and_lock (FIB_PROTOCOL_IP6, vrf_id,
-					       FIB_SOURCE_PLUGIN_HI);
+					       nat_fib_src_hi);
 	  p->vrf_id = vrf_id;
 	}
 

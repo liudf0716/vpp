@@ -589,8 +589,8 @@ rdma_create_if (vlib_main_t * vm, rdma_create_if_args_t * args)
   u16 qid;
   int i;
 
-  args->rxq_size = args->rxq_size ? args->rxq_size : 2 * VLIB_FRAME_SIZE;
-  args->txq_size = args->txq_size ? args->txq_size : 2 * VLIB_FRAME_SIZE;
+  args->rxq_size = args->rxq_size ? args->rxq_size : 1024;
+  args->txq_size = args->txq_size ? args->txq_size : 1024;
   args->rxq_num = args->rxq_num ? args->rxq_num : 1;
 
   if (!is_pow2 (args->rxq_num))
@@ -609,6 +609,19 @@ rdma_create_if (vlib_main_t * vm, rdma_create_if_args_t * args)
 	clib_error_return (0, "queue size must be a power of two >= %i",
 			   VLIB_FRAME_SIZE);
       goto err0;
+    }
+
+  switch (args->mode)
+    {
+    case RDMA_MODE_AUTO:
+      break;
+    case RDMA_MODE_IBV:
+      break;
+    case RDMA_MODE_DV:
+      args->rv = VNET_API_ERROR_INVALID_VALUE;
+      args->error = clib_error_return (0, "unsupported mode");
+      goto err0;
+      break;
     }
 
   dev_list = ibv_get_device_list (&n_devs);
@@ -632,8 +645,12 @@ rdma_create_if (vlib_main_t * vm, rdma_create_if_args_t * args)
   pool_get_zero (rm->devices, rd);
   rd->dev_instance = rd - rm->devices;
   rd->per_interface_next_index = VNET_DEVICE_INPUT_NEXT_ETHERNET_INPUT;
-  rd->name = format (0, "%s", args->name);
   rd->linux_ifname = format (0, "%s", args->ifname);
+
+  if (!args->name || 0 == args->name[0])
+    rd->name = format (0, "%s/%d", args->ifname, rd->dev_instance);
+  else
+    rd->name = format (0, "%s", args->name);
 
   rd->pci = vlib_pci_get_device_info (vm, &pci_addr, &args->error);
   if (!rd->pci)
@@ -749,15 +766,9 @@ rdma_set_interface_next_node (vnet_main_t * vnm, u32 hw_if_index,
   rdma_main_t *rm = &rdma_main;
   vnet_hw_interface_t *hw = vnet_get_hw_interface (vnm, hw_if_index);
   rdma_device_t *rd = pool_elt_at_index (rm->devices, hw->dev_instance);
-
-  /* Shut off redirection */
-  if (node_index == ~0)
-    {
-      rd->per_interface_next_index = node_index;
-      return;
-    }
-
   rd->per_interface_next_index =
+    ~0 ==
+    node_index ? VNET_DEVICE_INPUT_NEXT_ETHERNET_INPUT :
     vlib_node_add_next (vlib_get_main (), rdma_input_node.index, node_index);
 }
 

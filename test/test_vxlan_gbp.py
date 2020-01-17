@@ -1,13 +1,13 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import socket
 from util import ip4_range, reassemble4_ether
 import unittest
 from framework import VppTestCase, VppTestRunner
 from template_bd import BridgeDomain
-from vpp_ip import VppIpAddress
 
-from scapy.layers.l2 import Ether, Raw
+from scapy.layers.l2 import Ether
+from scapy.packet import Raw
 from scapy.layers.inet import IP, UDP
 from scapy.layers.vxlan import VXLAN
 from scapy.utils import atol
@@ -24,7 +24,7 @@ class TestVxlanGbp(VppTestCase):
         return (Ether(src='00:00:00:00:00:01', dst='00:00:00:00:00:02') /
                 IP(src='1.2.3.4', dst='4.3.2.1') /
                 UDP(sport=10000, dport=20000) /
-                Raw('\xa5' * 100))
+                Raw(b'\xa5' * 100))
 
     @property
     def frame_reply(self):
@@ -32,7 +32,7 @@ class TestVxlanGbp(VppTestCase):
         return (Ether(src='00:00:00:00:00:02', dst='00:00:00:00:00:01') /
                 IP(src='4.3.2.1', dst='1.2.3.4') /
                 UDP(sport=20000, dport=10000) /
-                Raw('\xa5' * 100))
+                Raw(b'\xa5' * 100))
 
     def encapsulate(self, pkt, vni):
         """
@@ -104,8 +104,8 @@ class TestVxlanGbp(VppTestCase):
             rip.add_vpp_config()
             r = cls.vapi.vxlan_gbp_tunnel_add_del(
                 tunnel={
-                    'src': VppIpAddress(cls.pg0.local_ip4).encode(),
-                    'dst': VppIpAddress(dest_ip4).encode(),
+                    'src': cls.pg0.local_ip4,
+                    'dst': dest_ip4,
                     'vni': vni,
                     'instance': INVALID_INDEX,
                     'mcast_sw_if_index': INVALID_INDEX,
@@ -147,8 +147,8 @@ class TestVxlanGbp(VppTestCase):
             cls.single_tunnel_bd = 1
             r = cls.vapi.vxlan_gbp_tunnel_add_del(
                 tunnel={
-                    'src': VppIpAddress(cls.pg0.local_ip4).encode(),
-                    'dst': VppIpAddress(cls.pg0.remote_ip4).encode(),
+                    'src': cls.pg0.local_ip4,
+                    'dst': cls.pg0.remote_ip4,
                     'vni': cls.single_tunnel_bd,
                     'instance': INVALID_INDEX,
                     'mcast_sw_if_index': INVALID_INDEX,
@@ -258,7 +258,7 @@ class TestVxlanGbp(VppTestCase):
         frame = (Ether(src='00:00:00:00:00:02', dst='00:00:00:00:00:01') /
                  IP(src='4.3.2.1', dst='1.2.3.4') /
                  UDP(sport=20000, dport=10000) /
-                 Raw('\xa5' * 1450))
+                 Raw(b'\xa5' * 1450))
 
         self.pg1.add_stream([frame])
 

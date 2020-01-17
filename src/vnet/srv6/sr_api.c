@@ -24,6 +24,7 @@
 #include <vnet/interface.h>
 #include <vnet/api_errno.h>
 #include <vnet/feature/feature.h>
+#include <vnet/fib/fib_table.h>
 
 #include <vnet/vnet_msg_enum.h>
 
@@ -50,6 +51,7 @@ _(SR_POLICY_MOD, sr_policy_mod)                         \
 _(SR_POLICY_DEL, sr_policy_del)                         \
 _(SR_STEERING_ADD_DEL, sr_steering_add_del)             \
 _(SR_SET_ENCAP_SOURCE, sr_set_encap_source)             \
+_(SR_SET_ENCAP_HOP_LIMIT, sr_set_encap_hop_limit)       \
 _(SR_LOCALSIDS_DUMP, sr_localsids_dump)                 \
 _(SR_POLICIES_DUMP, sr_policies_dump)                   \
 _(SR_STEERING_POL_DUMP, sr_steering_pol_dump)
@@ -79,7 +81,7 @@ static void vl_api_sr_localsid_add_del_t_handler
     memcpy (&prefix.ip6, mp->nh_addr6, sizeof (prefix.ip6));
 
   rv = sr_cli_localsid (mp->is_del,
-			(ip6_address_t *) & mp->localsid,
+			(ip6_address_t *) & mp->localsid, 0,
 			mp->end_psp,
 			mp->behavior,
 			ntohl (mp->sw_if_index),
@@ -107,13 +109,14 @@ vl_api_sr_policy_add_t_handler (vl_api_sr_policy_add_t * mp)
 
 /*
  * sr_policy_add (ip6_address_t *bsid, ip6_address_t *segments,
- *                u32 weight, u8 behavior, u32 fib_table, u8 is_encap)
+ *                u32 weight, u8 behavior, u32 fib_table, u8 is_encap,
+ *                u16 behavior, void *plugin_mem)
  */
   int rv = 0;
   rv = sr_policy_add ((ip6_address_t *) & mp->bsid_addr,
 		      segments,
 		      ntohl (mp->sids.weight),
-		      mp->type, ntohl (mp->fib_table), mp->is_encap);
+		      mp->type, ntohl (mp->fib_table), mp->is_encap, 0, NULL);
   vec_free (segments);
 
   REPLY_MACRO (VL_API_SR_POLICY_ADD_REPLY);
@@ -178,6 +181,20 @@ vl_api_sr_set_encap_source_t_handler (vl_api_sr_set_encap_source_t * mp)
   REPLY_MACRO (VL_API_SR_SET_ENCAP_SOURCE_REPLY);
 }
 
+static void
+vl_api_sr_set_encap_hop_limit_t_handler (vl_api_sr_set_encap_hop_limit_t * mp)
+{
+  vl_api_sr_set_encap_hop_limit_reply_t *rmp;
+  int rv = 0;
+
+  if (mp->hop_limit == 0)
+    rv = VNET_API_ERROR_INVALID_VALUE;
+  else
+    sr_set_hop_limit (mp->hop_limit);
+
+  REPLY_MACRO (VL_API_SR_SET_ENCAP_HOP_LIMIT_REPLY);
+}
+
 static void vl_api_sr_steering_add_del_t_handler
   (vl_api_sr_steering_add_del_t * mp)
 {
@@ -223,7 +240,16 @@ static void send_sr_localsid_details
   else
     clib_memcpy (rmp->xconnect_nh_addr6, &t->next_hop.ip6,
 		 sizeof (ip6_address_t));
-  rmp->xconnect_iface_or_vrf_table = htonl (t->sw_if_index);
+
+  if (t->behavior == SR_BEHAVIOR_T || t->behavior == SR_BEHAVIOR_DT6)
+    rmp->xconnect_iface_or_vrf_table =
+      htonl (fib_table_get_table_id (t->sw_if_index, FIB_PROTOCOL_IP6));
+  else if (t->behavior == SR_BEHAVIOR_DT4)
+    rmp->xconnect_iface_or_vrf_table =
+      htonl (fib_table_get_table_id (t->sw_if_index, FIB_PROTOCOL_IP4));
+  else
+    rmp->xconnect_iface_or_vrf_table = htonl (t->sw_if_index);
+
   rmp->context = context;
 
   vl_api_send_msg (reg, (u8 *) rmp);
@@ -380,7 +406,7 @@ setup_message_id_table (api_main_t * am)
 static clib_error_t *
 sr_api_hookup (vlib_main_t * vm)
 {
-  api_main_t *am = &api_main;
+  api_main_t *am = vlibapi_get_main ();
 
 #define _(N,n)                                                  \
     vl_msg_api_set_handlers(VL_API_##N, #n,                     \

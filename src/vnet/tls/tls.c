@@ -358,10 +358,18 @@ void
 tls_session_reset_callback (session_t * s)
 {
   tls_ctx_t *ctx;
+  transport_connection_t *tc;
+  session_t *app_session;
 
   ctx = tls_ctx_get (s->opaque);
-  session_transport_reset_notify (&ctx->connection);
-  session_transport_closed_notify (&ctx->connection);
+  tc = &ctx->connection;
+  if (tls_ctx_handshake_is_over (ctx))
+    {
+      session_transport_reset_notify (tc);
+      session_transport_closed_notify (tc);
+    }
+  else if ((app_session = session_get (tc->s_index, tc->thread_index)))
+    session_free (app_session);
   tls_disconnect_transport (ctx);
 }
 
@@ -386,7 +394,10 @@ tls_session_disconnect_callback (session_t * tls_session)
   TLS_DBG (1, "TCP disconnecting handle %x session %u", tls_session->opaque,
 	   tls_session->session_index);
 
-  ctx = tls_ctx_get (tls_session->opaque);
+  ASSERT (tls_session->thread_index == vlib_get_thread_index ()
+	  || vlib_thread_is_main_w_barrier ());
+
+  ctx = tls_ctx_get_w_thread (tls_session->opaque, tls_session->thread_index);
   ctx->is_passive_close = 1;
   tls_ctx_transport_close (ctx);
 }
@@ -417,7 +428,7 @@ tls_session_accept_callback (session_t * tls_session)
   /* Preallocate app session. Avoids allocating a session post handshake
    * on tls_session rx and potentially invalidating the session pool */
   app_session = session_alloc (ctx->c_thread_index);
-  app_session->session_state = SESSION_STATE_CLOSED;
+  app_session->session_state = SESSION_STATE_CREATED;
   ctx->c_s_index = app_session->session_index;
 
   TLS_DBG (1, "Accept on listener %u new connection [%u]%x",
@@ -484,7 +495,7 @@ tls_session_connected_callback (u32 tls_app_index, u32 ho_ctx_index,
   /* Preallocate app session. Avoids allocating a session post handshake
    * on tls_session rx and potentially invalidating the session pool */
   app_session = session_alloc (ctx->c_thread_index);
-  app_session->session_state = SESSION_STATE_CLOSED;
+  app_session->session_state = SESSION_STATE_CREATED;
   ctx->c_s_index = app_session->session_index;
 
   return tls_ctx_init_client (ctx);
@@ -604,11 +615,11 @@ tls_start_listen (u32 app_listener_index, transport_endpoint_t * tep)
       return -1;
     }
 
-  sep->transport_proto = TRANSPORT_PROTO_TCP;
   clib_memset (args, 0, sizeof (*args));
   args->app_index = tm->app_index;
   args->sep_ext = *sep;
   args->sep_ext.ns_index = app->ns_index;
+  args->sep_ext.transport_proto = TRANSPORT_PROTO_TCP;
   if (vnet_listen (args))
     return -1;
 
@@ -716,6 +727,44 @@ format_tls_ctx (u8 * s, va_list * args)
   return s;
 }
 
+static u8 *
+format_tls_listener_ctx (u8 * s, va_list * args)
+{
+  session_t *tls_listener;
+  app_listener_t *al;
+  u32 app_si, app_ti;
+  tls_ctx_t *ctx;
+
+  ctx = va_arg (*args, tls_ctx_t *);
+
+  al = app_listener_get_w_handle (ctx->tls_session_handle);
+  tls_listener = app_listener_get_session (al);
+  session_parse_handle (ctx->app_session_handle, &app_si, &app_ti);
+  s = format (s, "[%d:%d][TLS] app_wrk %u engine %u tcp %d:%d",
+	      app_ti, app_si, ctx->parent_app_wrk_index, ctx->tls_ctx_engine,
+	      tls_listener->thread_index, tls_listener->session_index);
+
+  return s;
+}
+
+static u8 *
+format_tls_ctx_state (u8 * s, va_list * args)
+{
+  tls_ctx_t *ctx;
+  session_t *ts;
+
+  ctx = va_arg (*args, tls_ctx_t *);
+  ts = session_get_from_handle (ctx->app_session_handle);
+  if (ts->session_state == SESSION_STATE_LISTENING)
+    s = format (s, "%s", "LISTEN");
+  else if (tls_ctx_handshake_is_over (ctx))
+    s = format (s, "%s", "ESTABLISHED");
+  else
+    s = format (s, "%s", "HANDSHAKE");
+
+  return s;
+}
+
 u8 *
 format_tls_connection (u8 * s, va_list * args)
 {
@@ -731,9 +780,7 @@ format_tls_connection (u8 * s, va_list * args)
   s = format (s, "%-50U", format_tls_ctx, ctx);
   if (verbose)
     {
-      session_t *ts;
-      ts = session_get_from_handle (ctx->app_session_handle);
-      s = format (s, "state: %-7u", ts->session_state);
+      s = format (s, "%-15U", format_tls_ctx_state, ctx);
       if (verbose > 1)
 	s = format (s, "\n");
     }
@@ -745,18 +792,12 @@ format_tls_listener (u8 * s, va_list * args)
 {
   u32 tc_index = va_arg (*args, u32);
   u32 __clib_unused thread_index = va_arg (*args, u32);
-  u32 __clib_unused verbose = va_arg (*args, u32);
+  u32 verbose = va_arg (*args, u32);
   tls_ctx_t *ctx = tls_listener_ctx_get (tc_index);
-  session_t *tls_listener;
-  app_listener_t *al;
-  u32 app_si, app_ti;
 
-  al = app_listener_get_w_handle (ctx->tls_session_handle);
-  tls_listener = app_listener_get_session (al);
-  session_parse_handle (ctx->app_session_handle, &app_si, &app_ti);
-  s = format (s, "[%d:%d][TLS] app_wrk %u engine %u tcp %d:%d",
-	      app_ti, app_si, ctx->parent_app_wrk_index, ctx->tls_ctx_engine,
-	      tls_listener->thread_index, tls_listener->session_index);
+  s = format (s, "%-50U", format_tls_listener_ctx, ctx);
+  if (verbose)
+    s = format (s, "%-15U", format_tls_ctx_state, ctx);
   return s;
 }
 
@@ -881,6 +922,7 @@ static clib_error_t *
 tls_config_fn (vlib_main_t * vm, unformat_input_t * input)
 {
   tls_main_t *tm = &tls_main;
+  uword tmp;
   while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
     {
       if (unformat (input, "use-test-cert-in-ca"))
@@ -890,9 +932,15 @@ tls_config_fn (vlib_main_t * vm, unformat_input_t * input)
       else if (unformat (input, "first-segment-size %U", unformat_memory_size,
 			 &tm->first_seg_size))
 	;
-      else if (unformat (input, "fifo-size %U", unformat_memory_size,
-			 &tm->fifo_size))
-	;
+      else if (unformat (input, "fifo-size %U", unformat_memory_size, &tmp))
+	{
+	  if (tmp >= 0x100000000ULL)
+	    {
+	      return clib_error_return
+		(0, "fifo-size %llu (0x%llx) too large", tmp, tmp);
+	    }
+	  tm->fifo_size = tmp;
+	}
       else
 	return clib_error_return (0, "unknown input `%U'",
 				  format_unformat_error, input);

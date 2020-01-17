@@ -53,20 +53,64 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 if (CMAKE_BUILD_TYPE)
-  set(CMAKE_C_FLAGS "-g -fPIC ${CMAKE_C_FLAGS}")
-  set(CMAKE_C_FLAGS "-fstack-protector-all ${CMAKE_C_FLAGS}")
-  set(CMAKE_C_FLAGS "-Werror ${CMAKE_C_FLAGS}")
-  set(CMAKE_C_FLAGS "-DFORTIFY_SOURCE=2 ${CMAKE_C_FLAGS}")
+  set(CMAKE_C_FLAGS "-g -fPIC -Werror -Wall ${CMAKE_C_FLAGS}")
 endif()
 
 if (compiler_flag_no_address_of_packed_member)
   set(CMAKE_C_FLAGS "-Wno-address-of-packed-member ${CMAKE_C_FLAGS}")
 endif()
 
-set(CMAKE_C_FLAGS_RELEASE "-O2 ${CMAKE_C_FLAGS_RELEASE}")
-set(CMAKE_C_FLAGS_DEBUG "-O0 -DCLIB_DEBUG ${CMAKE_C_FLAGS_DEBUG}")
-set(CMAKE_LINKER_FLAGS_RELEASE "-pie -Wl,-z,now ${CMAKE_LINKER_FLAGS_RELEASE}")
+# release
+list(APPEND BUILD_TYPES "release")
+string(CONCAT CMAKE_C_FLAGS_RELEASE
+  "-O2 "
+  "-fstack-protector "
+  "-DFORTIFY_SOURCE=2 "
+  "-fno-common "
+)
+
+string(CONCAT CMAKE_EXE_LINKER_FLAGS_RELEASE "-pie")
+
+# debug
+list(APPEND BUILD_TYPES "debug")
+string(CONCAT CMAKE_C_FLAGS_DEBUG
+  "-O0 "
+  "-DCLIB_DEBUG "
+  "-fstack-protector "
+  "-DFORTIFY_SOURCE=2 "
+  "-fno-common "
+)
+
+# coverity
+list(APPEND BUILD_TYPES "coverity")
+string(CONCAT CMAKE_C_FLAGS_COVERITY "-O2 -D__COVERITY__")
+
+# gcov
+list(APPEND BUILD_TYPES "gcov")
+string(CONCAT CMAKE_C_FLAGS_GCOV
+  "-O0 "
+  "-DCLIB_DEBUG "
+  "-DCLIB_GCOV "
+  "-fprofile-arcs "
+  "-ftest-coverage ")
+
 string(TOUPPER "${CMAKE_BUILD_TYPE}" CMAKE_BUILD_TYPE_UC)
+
+
+string(REPLACE ";" " " BUILD_TYPES "${BUILD_TYPES}")
+set_property(CACHE CMAKE_BUILD_TYPE PROPERTY
+	     HELPSTRING "Build type - valid options are: ${BUILD_TYPES}")
+
+##############################################################################
+# sanitizers
+##############################################################################
+
+option(ENABLE_SANITIZE_ADDR "Enable Address Sanitizer" OFF)
+if (ENABLE_SANITIZE_ADDR)
+  set(CMAKE_C_FLAGS "-fsanitize=address --param asan-stack=0 -DCLIB_SANITIZE_ADDR ${CMAKE_C_FLAGS}")
+  set(CMAKE_EXE_LINKER_FLAGS "-fsanitize=address ${CMAKE_EXE_LINKER_FLAGS}")
+  set(CMAKE_SHARED_LINKER_FLAGS "-fsanitize=address ${CMAKE_SHARED_LINKER_FLAGS}")
+endif (ENABLE_SANITIZE_ADDR)
 
 ##############################################################################
 # install config
@@ -137,7 +181,8 @@ pr("VPP library version" "${VPP_LIB_VERSION}")
 pr("GIT toplevel dir" "${VPP_GIT_TOPLEVEL_DIR}")
 pr("Build type" "${CMAKE_BUILD_TYPE}")
 pr("C flags" "${CMAKE_C_FLAGS}${CMAKE_C_FLAGS_${CMAKE_BUILD_TYPE_UC}}")
-pr("Linker flags" "${CMAKE_LINKER_FLAGS}${CMAKE_LINKER_FLAGS_${CMAKE_BUILD_TYPE_UC}}")
+pr("Linker flags (apps)" "${CMAKE_EXE_LINKER_FLAGS}${CMAKE_EXE_LINKER_FLAGS_${CMAKE_BUILD_TYPE_UC}}")
+pr("Linker flags (libs)" "${CMAKE_SHARED_LINKER_FLAGS}${CMAKE_SHARED_LINKER_FLAGS_${CMAKE_BUILD_TYPE_UC}}")
 pr("Host processor" "${CMAKE_HOST_SYSTEM_PROCESSOR}")
 pr("Target processor" "${CMAKE_SYSTEM_PROCESSOR}")
 pr("Prefix path" "${CMAKE_PREFIX_PATH}")

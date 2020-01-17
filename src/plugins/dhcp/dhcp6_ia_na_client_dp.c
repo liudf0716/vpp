@@ -20,7 +20,7 @@
 #include <vnet/mfib/ip6_mfib.h>
 #include <vnet/fib/fib.h>
 #include <vnet/adj/adj_mcast.h>
-#include <vnet/ip/ip6_neighbor.h>
+#include <vnet/ip/ip6_link.h>
 #include <dhcp/dhcp6_ia_na_client_dp.h>
 #include <dhcp/dhcp6_client_common_dp.h>
 #include <vnet/ip/ip_types_api.h>
@@ -84,35 +84,21 @@ create_buffer_for_client_message (vlib_main_t * vm, u32 sw_if_index,
 				  u32 type)
 {
   dhcp6_client_common_main_t *ccm = &dhcp6_client_common_main;
-  vnet_main_t *vnm = vnet_get_main ();
-
   vlib_buffer_t *b;
   u32 bi;
   ip6_header_t *ip;
   udp_header_t *udp;
   dhcpv6_header_t *dhcp;
-  ip6_address_t src_addr;
+  const ip6_address_t *src_addr;
   u32 dhcp_opt_len = 0;
   client_state->transaction_start = vlib_time_now (vm);
   u32 n_addresses;
   u32 i;
 
-  vnet_hw_interface_t *hw = vnet_get_sup_hw_interface (vnm, sw_if_index);
-  vnet_sw_interface_t *sup_sw = vnet_get_sup_sw_interface (vnm, sw_if_index);
-  vnet_sw_interface_t *sw = vnet_get_sw_interface (vnm, sw_if_index);
-
-  /* Interface(s) down? */
-  if ((hw->flags & VNET_HW_INTERFACE_FLAG_LINK_UP) == 0)
-    return NULL;
-  if ((sup_sw->flags & VNET_SW_INTERFACE_FLAG_ADMIN_UP) == 0)
-    return NULL;
-  if ((sw->flags & VNET_SW_INTERFACE_FLAG_ADMIN_UP) == 0)
-    return NULL;
-
   /* Get a link-local address */
-  src_addr = ip6_neighbor_get_link_local_address (sw_if_index);
+  src_addr = ip6_get_link_local_address (sw_if_index);
 
-  if (src_addr.as_u8[0] != 0xfe)
+  if (src_addr->as_u8[0] != 0xfe)
     {
       clib_warning ("Could not find source address to send DHCPv6 packet");
       return NULL;
@@ -137,7 +123,7 @@ create_buffer_for_client_message (vlib_main_t * vm, u32 sw_if_index,
   udp = (udp_header_t *) (ip + 1);
   dhcp = (dhcpv6_header_t *) (udp + 1);
 
-  ip->src_address = src_addr;
+  ip->src_address = *src_addr;
   ip->hop_limit = 255;
   ip->ip_version_traffic_class_and_flow_label =
     clib_host_to_net_u32 (0x6 << 28);

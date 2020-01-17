@@ -29,7 +29,7 @@
 #include <vlib/pci/pci.h>
 #include <vlib/linux/vfio.h>
 
-#ifdef __x86_64__
+#if defined(__x86_64__) && !defined(CLIB_SANITIZE_ADDR)
 /* we keep physmem in low 38 bits of VA address space as some
    IOMMU implamentation cannot map above that range */
 #define VLIB_PHYSMEM_DEFAULT_BASE_ADDDR		(1ULL << 36)
@@ -177,6 +177,9 @@ vlib_physmem_config (vlib_main_t * vm, unformat_input_t * input)
   while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
     {
       if (unformat (input, "base-addr 0x%lx", &vpm->base_addr))
+	;
+      else if (unformat (input, "max-size %U",
+			 unformat_memory_size, &vpm->max_size))
 	;
       else
 	return unformat_parse_error (input);

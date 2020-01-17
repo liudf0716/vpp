@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import unittest
 
@@ -167,7 +167,7 @@ class TestBier(VppTestCase):
                 byte_val = scapy.compat.chb(1 << (bp - 1) % 8)
                 byte_pos = n_bytes - (((bp - 1) // 8) + 1)
                 byte_array[byte_pos] = byte_val
-                bitstring = ''.join([scapy.compat.chb(x) for x in byte_array])
+                bitstring = b''.join(byte_array)
 
                 self.assertEqual(len(bitstring), len(bier_hdr.BitString))
                 self.assertEqual(bitstring, bier_hdr.BitString)

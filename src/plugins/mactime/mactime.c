@@ -24,6 +24,7 @@
 #include <vpp/app/version.h>
 
 /* define message IDs */
+#include <vnet/format_fns.h>
 #include <mactime/mactime.api_enum.h>
 #include <mactime/mactime.api_types.h>
 
@@ -31,6 +32,8 @@
 
 #define REPLY_MSG_ID_BASE mm->msg_id_base
 #include <vlibapi/api_helper_macros.h>
+
+#include <vnet/ip-neighbor/ip_neighbor.h>
 
 mactime_main_t mactime_main;
 
@@ -64,6 +67,7 @@ mactime_enable_disable (mactime_main_t * mm, u32 sw_if_index,
 {
   vnet_sw_interface_t *sw;
   int rv = 0;
+  static u8 url_init_done;
 
   feature_init (mm);
 
@@ -81,6 +85,12 @@ mactime_enable_disable (mactime_main_t * mm, u32 sw_if_index,
 			       sw_if_index, enable_disable, 0, 0);
   vnet_feature_enable_disable ("interface-output", "mactime-tx",
 			       sw_if_index, enable_disable, 0, 0);
+  if (url_init_done == 0)
+    {
+      mactime_url_init (mm->vlib_main);
+      url_init_done = 1;
+    }
+
   return rv;
 }
 
@@ -192,6 +202,7 @@ vl_api_mactime_dump_t_handler (vl_api_mactime_dump_t * mp)
     memset (ep, 0, message_size);
     ep->_vl_msg_id = clib_host_to_net_u16 (VL_API_MACTIME_DETAILS
                                            + mm->msg_id_base);
+    ep->context = mp->context;
     /* Index is the key for the stats segment combined counters */
     ep->pool_index = clib_host_to_net_u32 (dev - mm->devices);
 
@@ -240,7 +251,7 @@ mactime_send_create_entry_message (u8 * mac_address)
   u8 *name;
   vl_api_mactime_add_del_range_t *mp;
 
-  am = &api_main;
+  am = vlibapi_get_main ();
   shmem_hdr = am->shmem_hdr;
   mp = vl_msg_api_alloc_as_if_client (sizeof (*mp));
   clib_memset (mp, 0, sizeof (*mp));
@@ -416,7 +427,12 @@ mactime_init (vlib_main_t * vm)
   return 0;
 }
 
-VLIB_INIT_FUNCTION (mactime_init);
+/* *INDENT-OFF* */
+VLIB_INIT_FUNCTION (mactime_init) =
+{
+  .runs_after = VLIB_INITS("ip_neighbor_init"),
+};
+/* *INDENT-ON* */
 
 static clib_error_t *
 mactime_config (vlib_main_t * vm, unformat_input_t * input)
@@ -510,6 +526,16 @@ format_bytes_with_width (u8 * s, va_list * va)
   return s;
 }
 
+static walk_rc_t
+mactime_ip_neighbor_copy (index_t ipni, void *ctx)
+{
+  mactime_main_t *mm = ctx;
+
+  vec_add1 (mm->arp_cache_copy, ipni);
+
+  return (WALK_CONTINUE);
+}
+
 static clib_error_t *
 show_mactime_command_fn (vlib_main_t * vm,
 			 unformat_input_t * input, vlib_cli_command_t * cmd)
@@ -524,17 +550,11 @@ show_mactime_command_fn (vlib_main_t * vm,
   int i, j;
   f64 now;
   vlib_counter_t allow, drop;
-  ethernet_arp_ip4_entry_t *n, *pool;
+  ip_neighbor_t *ipn;
 
   vec_reset_length (mm->arp_cache_copy);
-  pool = ip4_neighbors_pool ();
-
-  /* *INDENT-OFF* */
-  pool_foreach (n, pool,
-  ({
-    vec_add1 (mm->arp_cache_copy, n[0]);
-  }));
-  /* *INDENT-ON* */
+  /* Walk all ip4 neighbours on all interfaces */
+  ip_neighbor_walk (IP46_TYPE_IP4, ~0, mactime_ip_neighbor_copy, mm);
 
   now = clib_timebase_now (&mm->timebase);
 
@@ -651,11 +671,12 @@ show_mactime_command_fn (vlib_main_t * vm,
       /* This is really only good for small N... */
       for (j = 0; j < vec_len (mm->arp_cache_copy); j++)
 	{
-	  n = mm->arp_cache_copy + j;
-	  if (!memcmp (dp->mac_address, n->mac.bytes, sizeof (n->mac)))
+	  ipn = ip_neighbor_get (mm->arp_cache_copy[j]);
+	  if (!memcmp
+	      (dp->mac_address, ipn->ipn_mac.bytes, sizeof (ipn->ipn_mac)))
 	    {
-	      vlib_cli_output (vm, "%17s%U", " ", format_ip4_address,
-			       &n->ip4_address);
+	      vlib_cli_output (vm, "%17s%U", " ", format_ip46_address,
+			       ip_neighbor_get_ip (ipn), IP46_TYPE_IP4);
 	    }
 	}
     }

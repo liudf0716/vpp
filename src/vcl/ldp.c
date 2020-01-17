@@ -109,7 +109,11 @@ typedef struct
 
 #define LDBG(_lvl, _fmt, _args...) 					\
   if (ldp->debug > _lvl)						\
-    clib_warning ("ldp<%d>: " _fmt, getpid(), ##_args)
+    {									\
+      int errno_saved = errno;						\
+      clib_warning ("ldp<%d>: " _fmt, getpid(), ##_args);		\
+      errno = errno_saved;						\
+    }
 
 static ldp_main_t ldp_main = {
   .vlsh_bit_val = (1 << LDP_SID_BIT_MIN),
@@ -482,8 +486,13 @@ writev (int fd, const struct iovec * iov, int iovcnt)
   return size;
 }
 
+#ifdef HAVE_FCNTL64
+int
+fcntl64 (int fd, int cmd, ...)
+#else
 int
 fcntl (int fd, int cmd, ...)
+#endif
 {
   vls_handle_t vlsh;
   int rv = 0;
@@ -531,7 +540,11 @@ fcntl (int fd, int cmd, ...)
     }
   else
     {
+#ifdef HAVE_FCNTL64
+      rv = libc_vfcntl64 (fd, cmd, ap);
+#else
       rv = libc_vfcntl (fd, cmd, ap);
+#endif
     }
 
   va_end (ap);

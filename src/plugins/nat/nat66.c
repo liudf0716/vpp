@@ -19,6 +19,7 @@
 
 #include <nat/nat66.h>
 #include <vnet/fib/fib_table.h>
+#include <vnet/ip/reass/ip6_sv_reass.h>
 
 nat66_main_t nat66_main;
 
@@ -29,11 +30,13 @@ VNET_FEATURE_INIT (nat66_in2out, static) = {
   .arc_name = "ip6-unicast",
   .node_name = "nat66-in2out",
   .runs_before = VNET_FEATURES ("ip6-lookup"),
+  .runs_after = VNET_FEATURES ("ip6-sv-reassembly-feature"),
 };
 VNET_FEATURE_INIT (nat66_out2in, static) = {
   .arc_name = "ip6-unicast",
   .node_name = "nat66-out2in",
   .runs_before = VNET_FEATURES ("ip6-lookup"),
+  .runs_after = VNET_FEATURES ("ip6-sv-reassembly-feature"),
 };
 
 /* *INDENT-ON* */
@@ -99,6 +102,9 @@ nat66_interface_add_del (u32 sw_if_index, u8 is_inside, u8 is_add)
     }
 
   feature_name = is_inside ? "nat66-in2out" : "nat66-out2in";
+  int rv = ip6_sv_reass_enable_disable_with_refcnt (sw_if_index, is_add);
+  if (rv)
+    return rv;
   return vnet_feature_enable_disable ("ip6-unicast", feature_name,
 				      sw_if_index, is_add, 0, 0);
 }
@@ -170,7 +176,7 @@ nat66_static_mapping_add_del (ip6_address_t * l_addr, ip6_address_t * e_addr,
 	return VNET_API_ERROR_VALUE_EXIST;
 
       fib_index = fib_table_find_or_create_and_lock (FIB_PROTOCOL_IP6, vrf_id,
-						     FIB_SOURCE_PLUGIN_HI);
+						     nat_fib_src_hi);
       pool_get (nm->sm, sm);
       clib_memset (sm, 0, sizeof (*sm));
       sm->l_addr.as_u64[0] = l_addr->as_u64[0];
@@ -214,8 +220,7 @@ nat66_static_mapping_add_del (ip6_address_t * l_addr, ip6_address_t * e_addr,
       kv.key[2] = sm_key.as_u64[2];
       if (clib_bihash_add_del_24_8 (&nm->sm_e, &kv, 0))
 	nat_elog_warn ("nat66-static-map-by-external delete key failed");
-      fib_table_unlock (sm->fib_index, FIB_PROTOCOL_IP6,
-			FIB_SOURCE_PLUGIN_HI);
+      fib_table_unlock (sm->fib_index, FIB_PROTOCOL_IP6, nat_fib_src_hi);
       pool_put (nm->sm, sm);
     }
 

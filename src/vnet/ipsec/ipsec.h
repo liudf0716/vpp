@@ -25,7 +25,6 @@
 #include <vnet/ipsec/ipsec_spd.h>
 #include <vnet/ipsec/ipsec_spd_policy.h>
 #include <vnet/ipsec/ipsec_sa.h>
-#include <vnet/ipsec/ipsec_if.h>
 
 typedef clib_error_t *(*add_del_sa_sess_cb_t) (u32 sa_index, u8 is_add);
 typedef clib_error_t *(*check_support_cb_t) (ipsec_sa_t * sa);
@@ -62,8 +61,10 @@ typedef struct
   u32 esp6_decrypt_node_index;
   u32 esp6_encrypt_next_index;
   u32 esp6_decrypt_next_index;
-  u32 esp4_encrypt_tun_feature_index;
-  u32 esp6_encrypt_tun_feature_index;
+  u32 esp44_encrypt_tun_feature_index;
+  u32 esp46_encrypt_tun_feature_index;
+  u32 esp66_encrypt_tun_feature_index;
+  u32 esp64_encrypt_tun_feature_index;
 } ipsec_esp_backend_t;
 
 typedef struct
@@ -97,9 +98,6 @@ typedef struct
   ipsec_sa_t *sad;
   /* pool of policies */
   ipsec_policy_t *policies;
-
-  /* pool of tunnel interfaces */
-  ipsec_tunnel_if_t *tunnel_interfaces;
 
   uword *tunnel_index_by_key;
 
@@ -139,8 +137,10 @@ typedef struct
   u32 ah6_decrypt_next_index;
 
   /* tun encrypt arcs and feature nodes */
-  u32 esp4_encrypt_tun_feature_index;
-  u32 esp6_encrypt_tun_feature_index;
+  u32 esp44_encrypt_tun_feature_index;
+  u32 esp64_encrypt_tun_feature_index;
+  u32 esp46_encrypt_tun_feature_index;
+  u32 esp66_encrypt_tun_feature_index;
 
   /* tun nodes to drop packets when no crypto alg set on outbound SA */
   u32 esp4_no_crypto_tun_feature_index;
@@ -167,6 +167,21 @@ typedef struct
 
   /* per-thread data */
   ipsec_per_thread_data_t *ptd;
+
+  /** Worker handoff */
+  u32 ah4_enc_fq_index;
+  u32 ah4_dec_fq_index;
+  u32 ah6_enc_fq_index;
+  u32 ah6_dec_fq_index;
+
+  u32 esp4_enc_fq_index;
+  u32 esp4_dec_fq_index;
+  u32 esp6_enc_fq_index;
+  u32 esp6_dec_fq_index;
+  u32 esp4_enc_tun_fq_index;
+  u32 esp6_enc_tun_fq_index;
+  u32 esp4_dec_tun_fq_index;
+  u32 esp6_dec_tun_fq_index;
 } ipsec_main_t;
 
 typedef enum ipsec_format_flags_t_
@@ -183,14 +198,18 @@ clib_error_t *ipsec_add_del_sa_sess_cb (ipsec_main_t * im, u32 sa_index,
 
 clib_error_t *ipsec_check_support_cb (ipsec_main_t * im, ipsec_sa_t * sa);
 
-extern vlib_node_registration_t esp4_encrypt_node;
-extern vlib_node_registration_t esp4_decrypt_node;
 extern vlib_node_registration_t ah4_encrypt_node;
 extern vlib_node_registration_t ah4_decrypt_node;
-extern vlib_node_registration_t esp6_encrypt_node;
-extern vlib_node_registration_t esp6_decrypt_node;
 extern vlib_node_registration_t ah6_encrypt_node;
 extern vlib_node_registration_t ah6_decrypt_node;
+extern vlib_node_registration_t esp4_encrypt_node;
+extern vlib_node_registration_t esp4_decrypt_node;
+extern vlib_node_registration_t esp6_encrypt_node;
+extern vlib_node_registration_t esp6_decrypt_node;
+extern vlib_node_registration_t esp4_encrypt_tun_node;
+extern vlib_node_registration_t esp6_encrypt_tun_node;
+extern vlib_node_registration_t esp4_decrypt_tun_node;
+extern vlib_node_registration_t esp6_decrypt_tun_node;
 extern vlib_node_registration_t ipsec4_if_input_node;
 extern vlib_node_registration_t ipsec6_if_input_node;
 
@@ -248,6 +267,7 @@ ipsec_sa_get (u32 sa_index)
 
 void ipsec_add_feature (const char *arc_name, const char *node_name,
 			u32 * out_feature_index);
+
 
 #endif /* __IPSEC_H__ */
 

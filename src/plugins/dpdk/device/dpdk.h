@@ -83,7 +83,8 @@ extern vlib_node_registration_t admin_up_down_process_node;
   _ ("net_failsafe", FAILSAFE)    \
   _ ("net_liovf", LIOVF_ETHER)    \
   _ ("net_qede", QEDE)		  \
-  _ ("net_netvsc", NETVSC)
+  _ ("net_netvsc", NETVSC)        \
+  _ ("net_bnxt", BNXT)
 
 typedef enum
 {
@@ -335,6 +336,8 @@ typedef struct
   u32 hqos_enabled;
   dpdk_device_config_hqos_t hqos;
   u8 tso;
+  u8 *devargs;
+
 #define DPDK_DEVICE_TSO_DEFAULT 0
 #define DPDK_DEVICE_TSO_OFF 1
 #define DPDK_DEVICE_TSO_ON  2

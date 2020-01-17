@@ -18,7 +18,6 @@
 
 #include <vnet/dpo/dvr_dpo.h>
 #include <vnet/fib/fib_table.h>
-#include <vnet/ip/ip_neighbor.h>
 
 /**
  * A fixed MAC address to use as the source MAC for packets L3 switched
@@ -53,6 +52,7 @@ typedef struct gbp_route_domain_db_t
 } gbp_route_domain_db_t;
 
 static gbp_route_domain_db_t gbp_route_domain_db;
+static fib_source_t gbp_fib_source;
 
 /**
  * logger
@@ -154,7 +154,7 @@ gbp_route_domain_add_and_lock (u32 rd_id,
 	grd->grd_fib_index[fproto] =
 	  fib_table_find_or_create_and_lock (fproto,
 					     grd->grd_table_id[fproto],
-					     FIB_SOURCE_PLUGIN_HI);
+					     gbp_fib_source);
 
 	if (~0 != grd->grd_uu_sw_if_index[fproto])
 	  {
@@ -172,7 +172,7 @@ gbp_route_domain_add_and_lock (u32 rd_id,
 	    mac_address_to_bytes (gbp_route_domain_get_local_mac (),
 				  eth->src_address);
 	    mac_address_to_bytes (gbp_route_domain_get_remote_mac (),
-				  eth->src_address);
+				  eth->dst_address);
 
 	    /*
 	     * create an adjacency out of the uu-fwd interfaces that will
@@ -221,8 +221,7 @@ gbp_route_domain_unlock (index_t index)
 
       FOR_EACH_FIB_IP_PROTOCOL (fproto)
       {
-	fib_table_unlock (grd->grd_fib_index[fproto],
-			  fproto, FIB_SOURCE_PLUGIN_HI);
+	fib_table_unlock (grd->grd_fib_index[fproto], fproto, gbp_fib_source);
 	if (INDEX_INVALID != grd->grd_adj[fproto])
 	  adj_unlock (grd->grd_adj[fproto]);
       }
@@ -430,6 +429,9 @@ static clib_error_t *
 gbp_route_domain_init (vlib_main_t * vm)
 {
   grd_logger = vlib_log_register_class ("gbp", "rd");
+  gbp_fib_source = fib_source_allocate ("gbp-rd",
+					FIB_SOURCE_PRIORITY_HI,
+					FIB_SOURCE_BH_DROP);
 
   return (NULL);
 }

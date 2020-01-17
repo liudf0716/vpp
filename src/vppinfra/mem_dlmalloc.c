@@ -19,6 +19,7 @@
 #include <vppinfra/lock.h>
 #include <vppinfra/hash.h>
 #include <vppinfra/elf_clib.h>
+#include <vppinfra/sanitizer.h>
 
 void *clib_per_cpu_mheaps[CLIB_MAX_MHEAPS];
 
@@ -213,6 +214,8 @@ clib_mem_init (void *memory, uword memory_size)
     }
   else
     heap = create_mspace (memory_size, 1 /* locked */ );
+
+  CLIB_MEM_POISON (mspace_least_addr (heap), mspace_footprint (heap));
 
   clib_mem_set_heap (heap);
 

@@ -105,12 +105,14 @@ STATIC_ASSERT (sizeof (vnet_rewrite_header_t) <= 16,
       vnet_rewrite_declare(64 - 2*sizeof(int)) rw;
     } my_adjacency_t;
 */
-#define vnet_declare_rewrite(total_bytes)				\
-struct {								\
-  vnet_rewrite_header_t rewrite_header;  			        \
-									\
-  u8 rewrite_data[(total_bytes) - sizeof (vnet_rewrite_header_t)];	\
-}
+#define VNET_DECLARE_REWRITE                         \
+  struct                                             \
+  {                                                  \
+    vnet_rewrite_header_t rewrite_header;            \
+                                                     \
+    u8 rewrite_data[(VNET_REWRITE_TOTAL_BYTES) -     \
+                    sizeof (vnet_rewrite_header_t)]; \
+  }
 
 always_inline void
 vnet_rewrite_clear_data_internal (vnet_rewrite_header_t * rw, int max_size)
@@ -152,7 +154,7 @@ vnet_rewrite_get_data_internal (vnet_rewrite_header_t * rw, int max_size)
   vnet_rewrite_get_data_internal (&((rw).rewrite_header), sizeof ((rw).rewrite_data))
 
 always_inline void
-_vnet_rewrite_one_header (vnet_rewrite_header_t * h0,
+_vnet_rewrite_one_header (const vnet_rewrite_header_t * h0,
 			  void *packet0, int most_likely_size)
 {
   /* 0xfefe => poisoned adjacency => crash */
@@ -170,8 +172,8 @@ _vnet_rewrite_one_header (vnet_rewrite_header_t * h0,
 }
 
 always_inline void
-_vnet_rewrite_two_headers (vnet_rewrite_header_t * h0,
-			   vnet_rewrite_header_t * h1,
+_vnet_rewrite_two_headers (const vnet_rewrite_header_t * h0,
+			   const vnet_rewrite_header_t * h1,
 			   void *packet0, void *packet1, int most_likely_size)
 {
   /* 0xfefe => poisoned adjacency => crash */

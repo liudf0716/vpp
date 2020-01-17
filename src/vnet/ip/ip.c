@@ -309,7 +309,24 @@ format_ip_dscp (u8 * s, va_list * va)
 #undef _
     }
 
-  return (format (s, "unknon"));
+  return (format (s, "unknown"));
+}
+
+u8 *
+format_ip_ecn (u8 * s, va_list * va)
+{
+  ip_ecn_t ecn = va_arg (*va, u32);	// int promotion of u8
+
+  switch (ecn)
+    {
+#define _(n,v)                                                  \
+    case IP_ECN_##v:                                           \
+      return (format (s, "%s", #v));
+      foreach_ip_ecn
+#undef _
+    }
+
+  return (format (s, "unknown"));
 }
 
 /*

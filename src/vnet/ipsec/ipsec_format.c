@@ -292,6 +292,8 @@ format_ipsec_sa (u8 * s, va_list * args)
 
   s = format (s, "\n   locks %d", sa->node.fn_locks);
   s = format (s, "\n   salt 0x%x", clib_net_to_host_u32 (sa->salt));
+  s = format (s, "\n   thread-indices [encrypt:%d decrypt:%d]",
+	      sa->encrypt_thread_index, sa->decrypt_thread_index);
   s = format (s, "\n   seq %u seq-hi %u", sa->seq, sa->seq_hi);
   s = format (s, "\n   last-seq %u last-seq-hi %u window %U",
 	      sa->last_seq, sa->last_seq_hi,
@@ -329,40 +331,6 @@ format_ipsec_sa (u8 * s, va_list * args)
 	  s = format (s, "\n      %U", format_dpo_id, &sa->dpo, 6);
 	}
     }
-
-done:
-  return (s);
-}
-
-u8 *
-format_ipsec_tunnel (u8 * s, va_list * args)
-{
-  ipsec_main_t *im = &ipsec_main;
-  u32 ti = va_arg (*args, u32);
-  ipsec_tunnel_if_t *t;
-
-  if (pool_is_free_index (im->tunnel_interfaces, ti))
-    {
-      s = format (s, "No such tunnel index: %d", ti);
-      goto done;
-    }
-
-  t = pool_elt_at_index (im->tunnel_interfaces, ti);
-
-  if (t->hw_if_index == ~0)
-    goto done;
-
-  s =
-    format (s, "%U\n", format_vnet_hw_if_index_name, im->vnet_main,
-	    t->hw_if_index);
-
-  s = format (s, "   out-bound sa: ");
-  s = format (s, "%U\n", format_ipsec_sa, t->output_sa_index,
-	      IPSEC_FORMAT_BRIEF);
-
-  s = format (s, "    in-bound sa: ");
-  s = format (s, "%U\n", format_ipsec_sa, t->input_sa_index,
-	      IPSEC_FORMAT_BRIEF);
 
 done:
   return (s);

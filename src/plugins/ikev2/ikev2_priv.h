@@ -143,6 +143,12 @@ typedef struct
   u8 *sk_ar;
   u8 *sk_ei;
   u8 *sk_er;
+  u32 salt_ei;
+  u32 salt_er;
+
+  /* installed data */
+  u32 local_sa_id;
+  u32 remote_sa_id;
 
   /* lifetime data */
   f64 time_to_expiration;
@@ -290,6 +296,9 @@ typedef struct
   uword *sa_by_ispi;
 
   ikev2_main_per_thread_data_t *per_thread_data;
+
+  /* interface indices managed by IKE */
+  uword *sw_if_indices;
 
   /* API message ID base */
   u16 msg_id_base;

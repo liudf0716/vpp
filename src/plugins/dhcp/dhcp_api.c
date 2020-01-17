@@ -269,10 +269,12 @@ dhcp_client_lease_encode (vl_api_dhcp_lease_t * lease,
   clib_memcpy (&lease->hostname, client->hostname, len);
   lease->hostname[len] = 0;
 
-  lease->mask_width = client->subnet_mask_width;
-  clib_memcpy (&lease->host_address.un, (u8 *) & client->leased_address,
+  lease->mask_width = client->installed.subnet_mask_width;
+  clib_memcpy (&lease->host_address.un,
+	       (u8 *) & client->installed.leased_address,
 	       sizeof (ip4_address_t));
-  clib_memcpy (&lease->router_address.un, (u8 *) & client->router_address,
+  clib_memcpy (&lease->router_address.un,
+	       (u8 *) & client->installed.router_address,
 	       sizeof (ip4_address_t));
 
   lease->count = vec_len (client->domain_server_address);
@@ -370,11 +372,17 @@ send_dhcp_client_entry (const dhcp_client_t * client, void *arg)
 {
   dhcp_client_send_walk_ctx_t *ctx;
   vl_api_dhcp_client_details_t *mp;
+  u32 count;
+  size_t n;
 
   ctx = arg;
 
-  mp = vl_msg_api_alloc (sizeof (*mp));
-  clib_memset (mp, 0, sizeof (*mp));
+  count = vec_len (client->domain_server_address);
+  n = sizeof (*mp) + (count * sizeof (vl_api_domain_server_t));
+  mp = vl_msg_api_alloc (n);
+  if (!mp)
+    return 0;
+  clib_memset (mp, 0, n);
 
   mp->_vl_msg_id = ntohs (VL_API_DHCP_CLIENT_DETAILS + REPLY_MSG_ID_BASE);
   mp->context = ctx->context;

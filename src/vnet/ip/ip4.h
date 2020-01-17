@@ -230,7 +230,7 @@ ip4_src_address_for_packet (ip_lookup_main_t * lm,
 /* Find interface address which matches destination. */
 always_inline ip4_address_t *
 ip4_interface_address_matching_destination (ip4_main_t * im,
-					    ip4_address_t * dst,
+					    const ip4_address_t * dst,
 					    u32 sw_if_index,
 					    ip_interface_address_t **
 					    result_ia)
@@ -271,18 +271,9 @@ void ip4_sw_interface_enable_disable (u32 sw_if_index, u32 is_enable);
 
 int ip4_address_compare (ip4_address_t * a1, ip4_address_t * a2);
 
-/* Send an ARP request to see if given destination is reachable on given interface. */
-clib_error_t *ip4_probe_neighbor (vlib_main_t * vm, ip4_address_t * dst,
-				  u32 sw_if_index, u8 refresh);
-
-clib_error_t *ip4_set_arp_limit (u32 arp_limit);
-
 uword
 ip4_udp_register_listener (vlib_main_t * vm,
 			   u16 dst_port, u32 next_node_index);
-
-void
-ip4_icmp_register_type (vlib_main_t * vm, icmp4_type_t type, u32 node_index);
 
 u16 ip4_tcp_udp_compute_checksum (vlib_main_t * vm, vlib_buffer_t * p0,
 				  ip4_header_t * ip0);
@@ -404,16 +395,14 @@ vlib_buffer_push_ip4 (vlib_main_t * vm, vlib_buffer_t * b,
   ih->src_address.as_u32 = src->as_u32;
   ih->dst_address.as_u32 = dst->as_u32;
 
+  vnet_buffer (b)->l3_hdr_offset = (u8 *) ih - b->data;
+  b->flags |= VNET_BUFFER_F_IS_IP4 | VNET_BUFFER_F_L3_HDR_OFFSET_VALID;
+
   /* Offload ip4 header checksum generation */
   if (csum_offload)
     {
       ih->checksum = 0;
-      b->flags |= VNET_BUFFER_F_OFFLOAD_IP_CKSUM | VNET_BUFFER_F_IS_IP4;
-      vnet_buffer (b)->l3_hdr_offset = (u8 *) ih - b->data;
-      vnet_buffer (b)->l4_hdr_offset = vnet_buffer (b)->l3_hdr_offset +
-	sizeof (*ih);
-      b->flags |=
-	VNET_BUFFER_F_L3_HDR_OFFSET_VALID | VNET_BUFFER_F_L4_HDR_OFFSET_VALID;
+      b->flags |= VNET_BUFFER_F_OFFLOAD_IP_CKSUM;
     }
   else
     ih->checksum = ip4_header_checksum (ih);

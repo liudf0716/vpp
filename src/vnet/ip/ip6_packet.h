@@ -67,75 +67,6 @@ typedef CLIB_PACKED (struct {
 }) ip6_address_fib_t;
 /* *INDENT-ON* */
 
-typedef enum
-{
-  IP46_TYPE_ANY,
-  IP46_TYPE_IP4,
-  IP46_TYPE_IP6
-} ip46_type_t;
-
-/* *INDENT-OFF* */
-typedef CLIB_PACKED (union ip46_address_t_ {
-  struct {
-    u32 pad[3];
-    ip4_address_t ip4;
-  };
-  ip6_address_t ip6;
-  u8 as_u8[16];
-  u64 as_u64[2];
-}) ip46_address_t;
-/* *INDENT-ON* */
-#define ip46_address_is_ip4(ip46)	(((ip46)->pad[0] | (ip46)->pad[1] | (ip46)->pad[2]) == 0)
-#define ip46_address_mask_ip4(ip46)	((ip46)->pad[0] = (ip46)->pad[1] = (ip46)->pad[2] = 0)
-#define ip46_address_set_ip4(ip46, ip)	(ip46_address_mask_ip4(ip46), (ip46)->ip4 = (ip)[0])
-#define ip46_address_reset(ip46)	((ip46)->as_u64[0] = (ip46)->as_u64[1] = 0)
-#define ip46_address_cmp(ip46_1, ip46_2) (memcmp(ip46_1, ip46_2, sizeof(*ip46_1)))
-#define ip46_address_is_zero(ip46)	(((ip46)->as_u64[0] == 0) && ((ip46)->as_u64[1] == 0))
-#define ip46_address_is_equal(a1, a2)	(((a1)->as_u64[0] == (a2)->as_u64[0]) \
-                                         && ((a1)->as_u64[1] == (a2)->as_u64[1]))
-#define ip46_address_initializer {{{ 0 }}}
-
-static_always_inline int
-ip46_address_is_equal_v4 (const ip46_address_t * ip46,
-			  const ip4_address_t * ip4)
-{
-  return (ip46->ip4.as_u32 == ip4->as_u32);
-}
-
-static_always_inline int
-ip46_address_is_equal_v6 (const ip46_address_t * ip46,
-			  const ip6_address_t * ip6)
-{
-  return ((ip46->ip6.as_u64[0] == ip6->as_u64[0]) &&
-	  (ip46->ip6.as_u64[1] == ip6->as_u64[1]));
-}
-
-static_always_inline void
-ip46_address_copy (ip46_address_t * dst, const ip46_address_t * src)
-{
-  dst->as_u64[0] = src->as_u64[0];
-  dst->as_u64[1] = src->as_u64[1];
-}
-
-static_always_inline void
-ip46_address_set_ip6 (ip46_address_t * dst, const ip6_address_t * src)
-{
-  dst->as_u64[0] = src->as_u64[0];
-  dst->as_u64[1] = src->as_u64[1];
-}
-
-always_inline ip46_address_t
-to_ip46 (u32 is_ipv6, u8 * buf)
-{
-  ip46_address_t ip;
-  if (is_ipv6)
-    ip.ip6 = *((ip6_address_t *) buf);
-  else
-    ip46_address_set_ip4 (&ip, (ip4_address_t *) buf);
-  return ip;
-}
-
-
 always_inline void
 ip6_addr_fib_init (ip6_address_fib_t * addr_fib,
 		   const ip6_address_t * address, u32 fib_index)
@@ -187,13 +118,6 @@ always_inline uword
 ip6_address_is_multicast (const ip6_address_t * a)
 {
   return a->as_u8[0] == 0xff;
-}
-
-always_inline uword
-ip46_address_is_multicast (const ip46_address_t * a)
-{
-  return ip46_address_is_ip4 (a) ? ip4_address_is_multicast (&a->ip4) :
-    ip6_address_is_multicast (&a->ip6);
 }
 
 always_inline void
@@ -396,6 +320,20 @@ ip6_traffic_class_network_order (const ip6_header_t * ip6)
 	  & 0x0ff00000) >> 20;
 }
 
+static_always_inline ip_dscp_t
+ip6_dscp_network_order (const ip6_header_t * ip6)
+{
+  return (clib_net_to_host_u32 (ip6->ip_version_traffic_class_and_flow_label)
+	  & 0x0fc00000) >> 22;
+}
+
+static_always_inline ip_ecn_t
+ip6_ecn_network_order (const ip6_header_t * ip6)
+{
+  return (clib_net_to_host_u32 (ip6->ip_version_traffic_class_and_flow_label)
+	  & 0x00300000) >> 20;
+}
+
 static_always_inline void
 ip6_set_traffic_class_network_order (ip6_header_t * ip6, ip_dscp_t dscp)
 {
@@ -403,6 +341,26 @@ ip6_set_traffic_class_network_order (ip6_header_t * ip6, ip_dscp_t dscp)
     clib_net_to_host_u32 (ip6->ip_version_traffic_class_and_flow_label);
   tmp &= 0xf00fffff;
   tmp |= (dscp << 20);
+  ip6->ip_version_traffic_class_and_flow_label = clib_host_to_net_u32 (tmp);
+}
+
+static_always_inline void
+ip6_set_dscp_network_order (ip6_header_t * ip6, ip_dscp_t dscp)
+{
+  u32 tmp =
+    clib_net_to_host_u32 (ip6->ip_version_traffic_class_and_flow_label);
+  tmp &= 0xf03fffff;
+  tmp |= (dscp << 22);
+  ip6->ip_version_traffic_class_and_flow_label = clib_host_to_net_u32 (tmp);
+}
+
+static_always_inline void
+ip6_set_ecn_network_order (ip6_header_t * ip6, ip_ecn_t ecn)
+{
+  u32 tmp =
+    clib_net_to_host_u32 (ip6->ip_version_traffic_class_and_flow_label);
+  tmp &= 0xffcfffff;
+  tmp |= (ecn << 20);
   ip6->ip_version_traffic_class_and_flow_label = clib_host_to_net_u32 (tmp);
 }
 
@@ -619,6 +577,67 @@ ip6_ext_header_find (vlib_main_t * vm, vlib_buffer_t * b,
       *prev_ext_header = prev;
     }
   return result;
+}
+
+/*
+ * walk extension headers, looking for a specific extension header and last
+ * extension header, calculating length of all extension headers
+ *
+ * @param vm
+ * @param b buffer to limit search to
+ * @param ip6_header ipv6 header
+ * @param find_hdr extension header to look for (ignored if ext_hdr is NULL)
+ * @param length[out] length of all extension headers
+ * @param ext_hdr[out] extension header of type find_hdr (may be NULL)
+ * @param last_ext_hdr[out] last extension header (may be NULL)
+ *
+ * @return 0 on success, -1 on failure (ext headers crossing buffer boundary)
+ */
+always_inline int
+ip6_walk_ext_hdr (vlib_main_t * vm, vlib_buffer_t * b,
+		  const ip6_header_t * ip6_header, u8 find_hdr, u32 * length,
+		  ip6_ext_header_t ** ext_hdr,
+		  ip6_ext_header_t ** last_ext_hdr)
+{
+  if (!ip6_ext_hdr (ip6_header->protocol))
+    {
+      *length = 0;
+      *ext_hdr = NULL;
+      *last_ext_hdr = NULL;
+      return 0;
+    }
+  *length = 0;
+  ip6_ext_header_t *h = (void *) (ip6_header + 1);
+  if (!vlib_object_within_buffer_data (vm, b, h, ip6_ext_header_len (h)))
+    {
+      return -1;
+    }
+  *length += ip6_ext_header_len (h);
+  *last_ext_hdr = h;
+  *ext_hdr = NULL;
+  if (ip6_header->protocol == find_hdr)
+    {
+      *ext_hdr = h;
+    }
+  while (ip6_ext_hdr (h->next_hdr))
+    {
+      if (h->next_hdr == find_hdr)
+	{
+	  h = ip6_ext_next_header (h);
+	  *ext_hdr = h;
+	}
+      else
+	{
+	  h = ip6_ext_next_header (h);
+	}
+      if (!vlib_object_within_buffer_data (vm, b, h, ip6_ext_header_len (h)))
+	{
+	  return -1;
+	}
+      *length += ip6_ext_header_len (h);
+      *last_ext_hdr = h;
+    }
+  return 0;
 }
 
 /* *INDENT-OFF* */

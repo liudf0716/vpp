@@ -158,7 +158,7 @@ dpdk_port_crc_strip_enabled (dpdk_device_t * xd)
   return !(xd->port_conf.rxmode.offloads & DEV_RX_OFFLOAD_KEEP_CRC);
 }
 
-/* The funciton check_l3cache helps check if Level 3 cache exists or not on current CPUs
+/* The function check_l3cache helps check if Level 3 cache exists or not on current CPUs
   return value 1: exist.
   return value 0: not exist.
 */
@@ -181,7 +181,7 @@ check_l3cache ()
 	  u8 *p = NULL;
 	  int level_cache = -1;
 
-	  p = format (p, "%s/%s/%s", sys_cache_dir, dp->d_name, "level");
+	  p = format (p, "%s/%s/%s%c", sys_cache_dir, dp->d_name, "level", 0);
 	  if ((err = clib_sysfs_read ((char *) p, "%d", &level_cache)))
 	    clib_error_free (err);
 
@@ -207,7 +207,6 @@ dpdk_lib_init (dpdk_main_t * dm)
   int i;
   clib_error_t *error;
   vlib_main_t *vm = vlib_get_main ();
-  vnet_main_t *vnm = vnet_get_main ();
   vlib_thread_main_t *tm = vlib_get_thread_main ();
   vnet_device_main_t *vdm = &vnet_device_main;
   vnet_sw_interface_t *sw;
@@ -242,7 +241,7 @@ dpdk_lib_init (dpdk_main_t * dm)
 
   if (nports < 1)
     {
-      dpdk_log_notice ("DPDK drivers found no ports...");
+      dpdk_log_notice ("DPDK drivers found no Ethernet devices...");
     }
 
   if (CLIB_DEBUG > 0)
@@ -284,7 +283,7 @@ dpdk_lib_init (dpdk_main_t * dm)
 
       if (dev_info.device == 0)
 	{
-	  clib_warning ("DPDK bug: missing device info. Skipping %s device",
+	  dpdk_log_notice ("DPDK bug: missing device info. Skipping %s device",
 			dev_info.driver_name);
 	  continue;
 	}
@@ -455,6 +454,7 @@ dpdk_lib_init (dpdk_main_t * dm)
 	    case VNET_DPDK_PMD_MLX4:
 	    case VNET_DPDK_PMD_MLX5:
 	    case VNET_DPDK_PMD_QEDE:
+	    case VNET_DPDK_PMD_BNXT:
 	      xd->port_type = port_type_from_speed_capa (&dev_info);
 	      break;
 
@@ -748,22 +748,20 @@ dpdk_lib_init (dpdk_main_t * dm)
 	if (xd->flags & DPDK_DEVICE_FLAG_TX_OFFLOAD && hi != NULL)
 	  hi->flags |= VNET_HW_INTERFACE_FLAG_SUPPORTS_TX_L4_CKSUM_OFFLOAD;
 
-    if (devconf->tso == DPDK_DEVICE_TSO_ON)
-    {
-      if (xd->flags & DPDK_DEVICE_FLAG_TX_OFFLOAD && hi != NULL)
-      {
-        /*tcp_udp checksum must be enabled*/
-        if (hi->flags & VNET_HW_INTERFACE_FLAG_SUPPORTS_TX_L4_CKSUM_OFFLOAD)
-        {
-          hi->flags |= VNET_HW_INTERFACE_FLAG_SUPPORTS_GSO;
-          vnm->interface_main.gso_interface_count++;
-          xd->port_conf.txmode.offloads |= DEV_TX_OFFLOAD_TCP_TSO |
-                                   DEV_TX_OFFLOAD_UDP_TSO;
-        }
-        else
-          return clib_error_return (0, "TSO: TCP/UDP checksum offload must be enabled");
-      }
-    }
+      if (devconf->tso == DPDK_DEVICE_TSO_ON && hi != NULL)
+	{
+	  /*tcp_udp checksum must be enabled*/
+	  if ((dm->conf->enable_tcp_udp_checksum) &&
+	      (hi->flags & VNET_HW_INTERFACE_FLAG_SUPPORTS_TX_L4_CKSUM_OFFLOAD))
+	    {
+		hi->flags |= VNET_HW_INTERFACE_FLAG_SUPPORTS_GSO;
+		xd->port_conf.txmode.offloads |= DEV_TX_OFFLOAD_TCP_TSO |
+		  DEV_TX_OFFLOAD_UDP_TSO;
+	    }
+	  else
+	    clib_warning ("%s: TCP/UDP checksum offload must be enabled",
+	      hi->name);
+	}
 
       dpdk_device_setup (xd);
 
@@ -830,7 +828,7 @@ dpdk_lib_init (dpdk_main_t * dm)
 	hi->max_packet_bytes = xd->port_conf.rxmode.max_rx_pkt_len
 	  - sizeof (ethernet_header_t);
       else
-	clib_warning ("hi NULL");
+	dpdk_log_warn ("hi NULL");
 
       if (dm->conf->no_multi_seg)
 	mtu = mtu > ETHER_MAX_LEN ? ETHER_MAX_LEN : mtu;
@@ -951,7 +949,7 @@ dpdk_bind_devices_to_uio (dpdk_config_main_t * conf)
     /* Chelsio T4/T5 */
     else if (d->vendor_id == 0x1425 && (d->device_id & 0xe000) == 0x4000)
       ;
-    /* Amazen Elastic Network Adapter */
+    /* Amazon Elastic Network Adapter */
     else if (d->vendor_id == 0x1d0f && d->device_id >= 0xec20 && d->device_id <= 0xec21)
       ;
     /* Cavium Network Adapter */
@@ -970,6 +968,19 @@ dpdk_bind_devices_to_uio (dpdk_config_main_t * conf)
       {
         continue;
       }
+    /* Broadcom NetXtreme S, and E series only */
+    else if (d->vendor_id == 0x14e4 &&
+	((d->device_id >= 0x16c0 &&
+		d->device_id != 0x16c6 && d->device_id != 0x16c7 &&
+		d->device_id != 0x16dd && d->device_id != 0x16f7 &&
+		d->device_id != 0x16fd && d->device_id != 0x16fe &&
+		d->device_id != 0x170d && d->device_id != 0x170c &&
+		d->device_id != 0x170e && d->device_id != 0x1712 &&
+		d->device_id != 0x1713) ||
+	(d->device_id == 0x1604 || d->device_id == 0x1605 ||
+	 d->device_id == 0x1614 || d->device_id == 0x1606 ||
+	 d->device_id == 0x1609 || d->device_id == 0x1614)))
+      ;
     else
       {
         dpdk_log_warn ("Unsupported PCI device 0x%04x:0x%04x found "
@@ -1107,6 +1118,8 @@ dpdk_device_config (dpdk_config_main_t * conf, vlib_pci_addr_t pci_addr,
 	{
 	  devconf->tso = DPDK_DEVICE_TSO_OFF;
 	}
+      else if (unformat (input, "devargs %s", &devconf->devargs))
+	;
       else
 	{
 	  error = clib_error_return (0, "unknown input `%U'",
@@ -1417,21 +1430,31 @@ dpdk_config (vlib_main_t * vm, unformat_input_t * input)
 	/* copy tso config from default device */
 	_(tso)
 
+	/* copy tso config from default device */
+	_(devargs)
+
     /* add DPDK EAL whitelist/blacklist entry */
     if (num_whitelisted > 0 && devconf->is_blacklisted == 0)
-      {
-	tmp = format (0, "-w%c", 0);
-	vec_add1 (conf->eal_init_args, tmp);
-	tmp = format (0, "%U%c", format_vlib_pci_addr, &devconf->pci_addr, 0);
-	vec_add1 (conf->eal_init_args, tmp);
-      }
+    {
+	  tmp = format (0, "-w%c", 0);
+	  vec_add1 (conf->eal_init_args, tmp);
+	  if (devconf->devargs)
+	  {
+	    tmp = format (0, "%U,%s", format_vlib_pci_addr, &devconf->pci_addr, devconf->devargs, 0);
+	  }
+	  else
+	  {
+	    tmp = format (0, "%U%c", format_vlib_pci_addr, &devconf->pci_addr, 0);
+	  }
+	  vec_add1 (conf->eal_init_args, tmp);
+    }
     else if (num_whitelisted == 0 && devconf->is_blacklisted != 0)
-      {
-	tmp = format (0, "-b%c", 0);
-	vec_add1 (conf->eal_init_args, tmp);
-	tmp = format (0, "%U%c", format_vlib_pci_addr, &devconf->pci_addr, 0);
-	vec_add1 (conf->eal_init_args, tmp);
-      }
+    {
+	  tmp = format (0, "-b%c", 0);
+	  vec_add1 (conf->eal_init_args, tmp);
+	  tmp = format (0, "%U%c", format_vlib_pci_addr, &devconf->pci_addr, 0);
+	  vec_add1 (conf->eal_init_args, tmp);
+    }
   }));
   /* *INDENT-ON* */
 

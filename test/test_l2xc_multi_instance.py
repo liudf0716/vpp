@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """L2XC Multi-instance Test Case HLD:
 
 **NOTES:**
@@ -141,7 +141,7 @@ class TestL2xcMultiInst(VppTestCase):
         :param int count: Number of hosts to create MAC/IPv4 addresses for.
         """
         n_int = len(cls.pg_interfaces)
-        macs_per_if = count / n_int
+        macs_per_if = count // n_int
         i = -1
         for pg_if in cls.pg_interfaces:
             i += 1

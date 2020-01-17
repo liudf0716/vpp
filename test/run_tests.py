@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import sys
 import shutil
@@ -433,7 +433,17 @@ def run_forked(testcase_suites):
                         results) or stop_run
 
             for finished_testcase in finished_testcase_suites:
-                finished_testcase.child.join()
+                # Somewhat surprisingly, the join below may
+                # timeout, even if client signaled that
+                # it finished - so we note it just in case.
+                join_start = time.time()
+                finished_testcase.child.join(test_finished_join_timeout)
+                join_end = time.time()
+                if join_end - join_start >= test_finished_join_timeout:
+                    finished_testcase.logger.error(
+                        "Timeout joining finished test: %s (pid %d)" %
+                        (finished_testcase.last_test,
+                         finished_testcase.child.pid))
                 finished_testcase.close_pipes()
                 wrapped_testcase_suites.remove(finished_testcase)
                 finished_unread_testcases.add(finished_testcase)
@@ -636,7 +646,7 @@ class AllResults(dict):
                 failed_testcase_ids = result[FAIL]
                 errored_testcase_ids = result[ERROR]
                 old_testcase_name = None
-                if failed_testcase_ids or errored_testcase_ids:
+                if failed_testcase_ids:
                     for failed_test_id in failed_testcase_ids:
                         new_testcase_name, test_name = \
                             result.get_testcase_names(failed_test_id)
@@ -646,15 +656,16 @@ class AllResults(dict):
                             old_testcase_name = new_testcase_name
                         print('    FAILURE: {} [{}]'.format(
                             colorize(test_name, RED), failed_test_id))
-                    for failed_test_id in errored_testcase_ids:
+                if errored_testcase_ids:
+                    for errored_test_id in errored_testcase_ids:
                         new_testcase_name, test_name = \
-                            result.get_testcase_names(failed_test_id)
+                            result.get_testcase_names(errored_test_id)
                         if new_testcase_name != old_testcase_name:
                             print('  Testcase name: {}'.format(
                                 colorize(new_testcase_name, RED)))
                             old_testcase_name = new_testcase_name
                         print('      ERROR: {} [{}]'.format(
-                            colorize(test_name, RED), failed_test_id))
+                            colorize(test_name, RED), errored_test_id))
         if self.testsuites_no_tests_run:
             print('TESTCASES WHERE NO TESTS WERE SUCCESSFULLY EXECUTED:')
             tc_classes = set()
@@ -726,6 +737,8 @@ if __name__ == '__main__':
 
     test_timeout = parse_digit_env("TIMEOUT", 600)  # default = 10 minutes
 
+    test_finished_join_timeout = 15
+
     retries = parse_digit_env("RETRIES", 0)
 
     debug = os.getenv("DEBUG", "n").lower() in ["gdb", "gdbserver"]
@@ -760,7 +773,7 @@ if __name__ == '__main__':
                                 % (min_req_shm >> 20))
             else:
                 extra_shm = shm_free - min_req_shm
-                shm_max_processes += extra_shm / shm_per_process
+                shm_max_processes += extra_shm // shm_per_process
             concurrent_tests = min(cpu_count(), shm_max_processes)
             print('Found enough resources to run tests with %s cores'
                   % concurrent_tests)
@@ -822,7 +835,7 @@ if __name__ == '__main__':
         # don't fork if requiring interactive terminal
         print('Running tests in foreground in the current process')
         full_suite = unittest.TestSuite()
-        map(full_suite.addTests, suites)
+        full_suite.addTests(suites)
         result = VppTestRunner(verbosity=verbose,
                                failfast=failfast,
                                print_summary=True).run(full_suite)

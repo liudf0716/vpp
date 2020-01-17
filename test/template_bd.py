@@ -1,9 +1,10 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import abc
 import six
 
-from scapy.layers.l2 import Ether, Raw
+from scapy.layers.l2 import Ether
+from scapy.packet import Raw
 from scapy.layers.inet import IP, UDP
 
 from util import ip4_range

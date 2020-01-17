@@ -24,6 +24,7 @@
 #include <vpp-api/client/stat_client.h>
 
 /* Declare message IDs */
+#include <vnet/format_fns.h>
 #include <mactime/mactime.api_enum.h>
 #include <mactime/mactime.api_types.h>
 
@@ -202,7 +203,7 @@ format_device (u8 * s, va_list * args)
     current_status = 4;
 
 print:
-  macstring = format (0, "%U", format_mac_address, dp->mac_address);
+  macstring = format (0, "%U", format_vl_api_mac_address_t, dp->mac_address);
   switch (current_status)
     {
     case 0:
@@ -430,7 +431,6 @@ vl_api_mactime_details_t_handler (vl_api_mactime_details_t * mp)
 {
   clib_warning ("WARNING: stub called...");
 }
-
 
 #include <mactime/mactime.api_test.c>
 

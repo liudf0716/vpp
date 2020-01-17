@@ -1206,8 +1206,7 @@ ip6_set_link_local_address (test_main_t * tm)
   tmp[0] = clib_host_to_net_u64 (0xfe80000000000000ULL);
   tmp[1] = clib_host_to_net_u64 (0x11ULL);
 
-  clib_memcpy (mp->address, &tmp[0], 8);
-  clib_memcpy (&mp->address[8], &tmp[1], 8);
+  ip6_address_encode ((ip6_address_encode *) & tmp, mp->address);
 
   mp->_vl_msg_id = ntohs (VL_API_SW_INTERFACE_IP6_SET_LINK_LOCAL_ADDRESS);
 
@@ -1288,7 +1287,7 @@ l2_bridge (test_main_t * tm)
 int
 main (int argc, char **argv)
 {
-  api_main_t *am = &api_main;
+  api_main_t *am = vlibapi_get_main ();
   test_main_t *tm = &test_main;
   int ch;
 

@@ -90,11 +90,11 @@ ct6_create_or_recycle_session (ct6_main_t * cmp,
   s0 = pool_elt_at_index (cmp->sessions[my_thread_index],
 			  cmp->last_index[my_thread_index]);
 
-  if (s0->expires < now)
+  if (CLIB_DEBUG > 0 && s0->expires < now)
     clib_warning ("session %d expired %.2f time now %.2f",
 		  s0 - cmp->sessions[my_thread_index], s0->expires, now);
 
-  if (pool_elts (cmp->sessions[my_thread_index]) >=
+  if (CLIB_DEBUG > 0 && pool_elts (cmp->sessions[my_thread_index]) >=
       cmp->max_sessions_per_worker)
     clib_warning ("recycle session %d have %d max %d",
 		  s0 - cmp->sessions[my_thread_index],
@@ -267,7 +267,7 @@ ct6_in2out_inline (vlib_main_t * vm,
        */
       if (PREDICT_FALSE (!ip6_address_is_global_unicast (&ip0->src_address)
 			 ||
-			 !ip6_address_is_global_unicast (&ip0->src_address)))
+			 !ip6_address_is_global_unicast (&ip0->dst_address)))
 	goto trace0;
       /* Pass non-udp, non-tcp traffic */
       if (PREDICT_FALSE (ip0->protocol != IP_PROTOCOL_TCP &&

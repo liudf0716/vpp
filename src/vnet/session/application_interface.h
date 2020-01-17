@@ -29,13 +29,13 @@ typedef struct certificate_
   u8 *cert;
 } app_cert_key_pair_t;
 
-typedef struct _stream_session_cb_vft
+typedef struct session_cb_vft_
 {
   /** Notify server of new segment */
-  int (*add_segment_callback) (u32 api_client_index, u64 segment_handle);
+  int (*add_segment_callback) (u32 app_wrk_index, u64 segment_handle);
 
   /** Notify server of new segment */
-  int (*del_segment_callback) (u32 api_client_index, u64 segment_handle);
+  int (*del_segment_callback) (u32 app_wrk_index, u64 segment_handle);
 
   /** Notify server of newly accepted session */
   int (*session_accept_callback) (session_t * new_session);
@@ -162,11 +162,11 @@ typedef struct _vnet_application_add_tls_key_args_t
 typedef enum crypto_engine_type_
 {
   CRYPTO_ENGINE_NONE,
-  CRYPTO_ENGINE_MBEDTLS,
   CRYPTO_ENGINE_OPENSSL,
+  CRYPTO_ENGINE_MBEDTLS,
   CRYPTO_ENGINE_VPP,
   CRYPTO_ENGINE_PICOTLS,
-  CRYPTO_N_ENGINES
+  CRYPTO_ENGINE_LAST = CRYPTO_ENGINE_PICOTLS,
 } crypto_engine_type_t;
 
 typedef struct _vnet_app_add_cert_key_pair_args_
@@ -175,6 +175,15 @@ typedef struct _vnet_app_add_cert_key_pair_args_
   u8 *key;
   u32 index;
 } vnet_app_add_cert_key_pair_args_t;
+
+typedef struct crypto_ctx_
+{
+  u32 ctx_index;		/**< index in crypto context pool */
+  u32 n_subscribers;		/**< refcount of sessions using said context */
+  u32 ckpair_index;		/**< certificate & key */
+  u8 crypto_engine;
+  void *data;			/**< protocol specific data */
+} crypto_context_t;
 
 /* Application attach options */
 typedef enum
@@ -256,7 +265,8 @@ clib_error_t *vnet_app_add_tls_cert (vnet_app_add_tls_cert_args_t * a);
 clib_error_t *vnet_app_add_tls_key (vnet_app_add_tls_key_args_t * a);
 int vnet_app_add_cert_key_pair (vnet_app_add_cert_key_pair_args_t * a);
 int vnet_app_del_cert_key_pair (u32 index);
-int vent_app_add_cert_key_interest (u32 index, u32 app_index);	/* Ask for app cb on pair deletion */
+/** Ask for app cb on pair deletion */
+int vnet_app_add_cert_key_interest (u32 index, u32 app_index);
 
 typedef struct app_session_transport_
 {
@@ -295,7 +305,11 @@ typedef struct session_listen_msg_
   u8 is_ip4;
   ip46_address_t ip;
   u32 ckpair_index;
+  u8 crypto_engine;
 } __clib_packed session_listen_msg_t;
+
+STATIC_ASSERT (sizeof (session_listen_msg_t) <= SESSION_CTRL_MSG_MAX_SIZE,
+	       "msg too large");
 
 typedef struct session_listen_uri_msg_
 {
@@ -303,6 +317,9 @@ typedef struct session_listen_uri_msg_
   u32 context;
   u8 uri[56];
 } __clib_packed session_listen_uri_msg_t;
+
+STATIC_ASSERT (sizeof (session_listen_uri_msg_t) <= SESSION_CTRL_MSG_MAX_SIZE,
+	       "msg too large");
 
 typedef struct session_bound_msg_
 {
@@ -345,6 +362,7 @@ typedef struct session_accepted_msg_
   u64 segment_handle;
   uword vpp_event_queue_address;
   transport_endpoint_t rmt;
+  u8 flags;
 } __clib_packed session_accepted_msg_t;
 
 typedef struct session_accepted_reply_msg_
@@ -364,11 +382,17 @@ typedef struct session_connect_msg_
   u8 proto;
   u8 is_ip4;
   ip46_address_t ip;
+  ip46_address_t lcl_ip;
   u8 hostname_len;
   u8 hostname[16];
   u64 parent_handle;
   u32 ckpair_index;
+  u8 crypto_engine;
+  u8 flags;
 } __clib_packed session_connect_msg_t;
+
+STATIC_ASSERT (sizeof (session_connect_msg_t) <= SESSION_CTRL_MSG_MAX_SIZE,
+	       "msg too large");
 
 typedef struct session_connect_uri_msg_
 {
@@ -376,6 +400,9 @@ typedef struct session_connect_uri_msg_
   u32 context;
   u8 uri[56];
 } __clib_packed session_connect_uri_msg_t;
+
+STATIC_ASSERT (sizeof (session_connect_uri_msg_t) <=
+	       SESSION_CTRL_MSG_MAX_SIZE, "msg too large");
 
 typedef struct session_connected_msg_
 {
@@ -457,6 +484,23 @@ typedef struct session_app_detach_msg_
   u32 client_index;
   u32 context;
 } session_app_detach_msg_t;
+
+typedef struct app_map_another_segment_msg_
+{
+  u32 client_index;
+  u32 context;
+  u8 fd_flags;
+  u32 segment_size;
+  u8 segment_name[128];
+  u64 segment_handle;
+} session_app_add_segment_msg_t;
+
+typedef struct app_unmap_segment_msg_
+{
+  u32 client_index;
+  u32 context;
+  u64 segment_handle;
+} session_app_del_segment_msg_t;
 
 typedef struct app_session_event_
 {

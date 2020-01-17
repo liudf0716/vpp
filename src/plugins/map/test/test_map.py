@@ -1,8 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import ipaddress
 import unittest
-from ipaddress import IPv6Network, IPv4Network
 
 from framework import VppTestCase, VppTestRunner
 from vpp_ip import DpoProto
@@ -10,7 +9,8 @@ from vpp_ip_route import VppIpRoute, VppRoutePath
 from util import fragment_rfc791, fragment_rfc8200
 
 import scapy.compat
-from scapy.layers.l2 import Ether, Raw
+from scapy.layers.l2 import Ether
+from scapy.packet import Raw
 from scapy.layers.inet import IP, UDP, ICMP, TCP, fragment
 from scapy.layers.inet6 import IPv6, ICMPv6TimeExceeded
 
@@ -97,8 +97,8 @@ class TestMAP(VppTestCase):
         self.assertEqual(rv[0].tag, tag,
                          "output produced incorrect tag value.")
 
-    def test_map_e(self):
-        """ MAP-E """
+    def test_map_e_udp(self):
+        """ MAP-E UDP"""
 
         #
         # Add a route to the MAP-BR
@@ -139,8 +139,8 @@ class TestMAP(VppTestCase):
         v4 = (Ether(dst=self.pg0.local_mac, src=self.pg0.remote_mac) /
               IP(src=self.pg0.remote_ip4, dst=self.pg0.remote_ip4) /
               UDP(sport=20000, dport=10000) /
-              Raw('\xa5' * 100))
-        rx = self.send_and_expect(self.pg0, v4*1, self.pg0)
+              Raw(b'\xa5' * 100))
+        rx = self.send_and_expect(self.pg0, v4 * 4, self.pg0)
         v4_reply = v4[1]
         v4_reply.ttl -= 1
         for p in rx:
@@ -152,9 +152,9 @@ class TestMAP(VppTestCase):
         v4 = (Ether(dst=self.pg0.local_mac, src=self.pg0.remote_mac) /
               IP(src=self.pg0.remote_ip4, dst='192.168.1.1') /
               UDP(sport=20000, dport=10000) /
-              Raw('\xa5' * 100))
+              Raw(b'\xa5' * 100))
 
-        self.send_and_assert_encapped_one(v4, "3000::1", map_translated_addr)
+        self.send_and_assert_encapped(v4 * 4, "3000::1", map_translated_addr)
 
         #
         # Verify reordered fragments are able to pass as well
@@ -162,7 +162,7 @@ class TestMAP(VppTestCase):
         v4 = (Ether(dst=self.pg0.local_mac, src=self.pg0.remote_mac) /
               IP(id=1, src=self.pg0.remote_ip4, dst='192.168.1.1') /
               UDP(sport=20000, dport=10000) /
-              Raw('\xa5' * 1000))
+              Raw(b'\xa5' * 1000))
 
         frags = fragment_rfc791(v4, 400)
         frags.reverse()
@@ -178,7 +178,7 @@ class TestMAP(VppTestCase):
         v6 = (Ether(dst=self.pg1.local_mac, src=self.pg1.remote_mac) /
               IPv6(src=self.pg1.remote_ip6, dst=self.pg1.remote_ip6) /
               UDP(sport=20000, dport=10000) /
-              Raw('\xa5' * 100))
+              Raw(b'\xa5' * 100))
         rx = self.send_and_expect(self.pg1, v6*1, self.pg1)
         v6_reply = v6[1]
         v6_reply.hlim -= 1
@@ -193,7 +193,7 @@ class TestMAP(VppTestCase):
              IPv6(dst='3000::1', src=map_translated_addr) /
              IP(dst=self.pg0.remote_ip4, src='192.168.1.1') /
              UDP(sport=10000, dport=20000) /
-             Raw('\xa5' * 100))
+             Raw(b'\xa5' * 100))
 
         self.pg1.add_stream(p)
 
@@ -212,7 +212,7 @@ class TestMAP(VppTestCase):
         #
         p = (IP(id=1, dst=self.pg0.remote_ip4, src='192.168.1.1') /
              UDP(sport=10000, dport=20000) /
-             Raw('\xa5' * 1500))
+             Raw(b'\xa5' * 1500))
         frags = fragment_rfc791(p, 400)
         frags.reverse()
 
@@ -294,6 +294,144 @@ class TestMAP(VppTestCase):
         pre_res_route.remove_vpp_config()
         self.vapi.ppcli("map params pre-resolve del ip6-nh 4001::1")
 
+    def test_map_e_inner_frag(self):
+        """ MAP-E Inner fragmentation """
+
+        #
+        # Add a route to the MAP-BR
+        #
+        map_br_pfx = "2001::"
+        map_br_pfx_len = 32
+        map_route = VppIpRoute(self,
+                               map_br_pfx,
+                               map_br_pfx_len,
+                               [VppRoutePath(self.pg1.remote_ip6,
+                                             self.pg1.sw_if_index)])
+        map_route.add_vpp_config()
+
+        #
+        # Add a domain that maps from pg0 to pg1
+        #
+        map_dst = '2001::/32'
+        map_src = '3000::1/128'
+        client_pfx = '192.168.0.0/16'
+        map_translated_addr = '2001:0:101:7000:0:c0a8:101:7'
+        tag = 'MAP-E tag.'
+        self.vapi.map_add_domain(ip4_prefix=client_pfx,
+                                 ip6_prefix=map_dst,
+                                 ip6_src=map_src,
+                                 ea_bits_len=20,
+                                 psid_offset=4,
+                                 psid_length=4,
+                                 mtu=1000,
+                                 tag=tag)
+
+        # Enable MAP on interface.
+        self.vapi.map_if_enable_disable(is_enable=1,
+                                        sw_if_index=self.pg0.sw_if_index,
+                                        is_translation=0)
+
+        # Enable inner fragmentation
+        self.vapi.map_param_set_fragmentation(inner=1)
+
+        v4 = (Ether(dst=self.pg0.local_mac, src=self.pg0.remote_mac) /
+              IP(src=self.pg0.remote_ip4, dst='192.168.1.1') /
+              UDP(sport=20000, dport=10000) /
+              Raw(b'\xa5' * 1300))
+
+        self.pg_send(self.pg0, v4*1)
+        rx = self.pg1.get_capture(2)
+
+        frags = fragment_rfc791(v4[1], 1000)
+        frags[0].id = 0
+        frags[1].id = 0
+        frags[0].ttl -= 1
+        frags[1].ttl -= 1
+        frags[0].chksum = 0
+        frags[1].chksum = 0
+
+        v6_reply1 = (IPv6(src='3000::1', dst=map_translated_addr, hlim=63) /
+                     frags[0])
+        v6_reply2 = (IPv6(src='3000::1', dst=map_translated_addr, hlim=63) /
+                     frags[1])
+        rx[0][1].fl = 0
+        rx[1][1].fl = 0
+        rx[0][1][IP].id = 0
+        rx[1][1][IP].id = 0
+        rx[0][1][IP].chksum = 0
+        rx[1][1][IP].chksum = 0
+
+        self.validate(rx[0][1], v6_reply1)
+        self.validate(rx[1][1], v6_reply2)
+
+    def test_map_e_tcp_mss(self):
+        """ MAP-E TCP MSS"""
+
+        #
+        # Add a route to the MAP-BR
+        #
+        map_br_pfx = "2001::"
+        map_br_pfx_len = 32
+        map_route = VppIpRoute(self,
+                               map_br_pfx,
+                               map_br_pfx_len,
+                               [VppRoutePath(self.pg1.remote_ip6,
+                                             self.pg1.sw_if_index)])
+        map_route.add_vpp_config()
+
+        #
+        # Add a domain that maps from pg0 to pg1
+        #
+        map_dst = '2001::/32'
+        map_src = '3000::1/128'
+        client_pfx = '192.168.0.0/16'
+        map_translated_addr = '2001:0:101:5000:0:c0a8:101:5'
+        tag = 'MAP-E TCP tag.'
+        self.vapi.map_add_domain(ip4_prefix=client_pfx,
+                                 ip6_prefix=map_dst,
+                                 ip6_src=map_src,
+                                 ea_bits_len=20,
+                                 psid_offset=4,
+                                 psid_length=4,
+                                 tag=tag)
+
+        # Enable MAP on pg0 interface.
+        self.vapi.map_if_enable_disable(is_enable=1,
+                                        sw_if_index=self.pg0.sw_if_index,
+                                        is_translation=0)
+
+        # Enable MAP on pg1 interface.
+        self.vapi.map_if_enable_disable(is_enable=1,
+                                        sw_if_index=self.pg1.sw_if_index,
+                                        is_translation=0)
+
+        # TCP MSS clamping
+        mss_clamp = 1300
+        self.vapi.map_param_set_tcp(mss_clamp)
+
+        #
+        # Send a v4 packet that will be encapped.
+        #
+        p_ether = Ether(dst=self.pg0.local_mac, src=self.pg0.remote_mac)
+        p_ip4 = IP(src=self.pg0.remote_ip4, dst='192.168.1.1')
+        p_tcp = TCP(sport=20000, dport=30000, flags="S",
+                    options=[("MSS", 1455)])
+        p4 = p_ether / p_ip4 / p_tcp
+
+        self.pg1.add_stream(p4)
+        self.pg_enable_capture(self.pg_interfaces)
+        self.pg_start()
+
+        rx = self.pg1.get_capture(1)
+        rx = rx[0]
+
+        self.assertTrue(rx.haslayer(IPv6))
+        self.assertEqual(rx[IP].src, p4[IP].src)
+        self.assertEqual(rx[IP].dst, p4[IP].dst)
+        self.assertEqual(rx[IPv6].src, "3000::1")
+        self.assertEqual(rx[TCP].options,
+                         TCP(options=[('MSS', mss_clamp)]).options)
+
     def validate(self, rx, expected):
         self.assertEqual(rx, expected.__class__(scapy.compat.raw(expected)))
 
@@ -332,7 +470,7 @@ class TestMAP(VppTestCase):
         v4 = (Ether(dst=self.pg0.local_mac, src=self.pg0.remote_mac) /
               IP(src=self.pg0.remote_ip4, dst=self.pg0.remote_ip4) /
               UDP(sport=20000, dport=10000) /
-              Raw('\xa5' * 100))
+              Raw(b'\xa5' * 100))
         rx = self.send_and_expect(self.pg0, v4*1, self.pg0)
         v4_reply = v4[1]
         v4_reply.ttl -= 1
@@ -342,7 +480,7 @@ class TestMAP(VppTestCase):
         v6 = (Ether(dst=self.pg1.local_mac, src=self.pg1.remote_mac) /
               IPv6(src=self.pg1.remote_ip6, dst=self.pg1.remote_ip6) /
               UDP(sport=20000, dport=10000) /
-              Raw('\xa5' * 100))
+              Raw(b'\xa5' * 100))
         rx = self.send_and_expect(self.pg1, v6*1, self.pg1)
         v6_reply = v6[1]
         v6_reply.hlim -= 1
@@ -503,6 +641,61 @@ class TestMAP(VppTestCase):
         for p in rx:
             self.validate(p[1], p4_translated)
 
+    def test_map_t_ip6_psid(self):
+        """ MAP-T v6->v4 PSID validation"""
+
+        #
+        # Add a domain that maps from pg0 to pg1
+        #
+        map_dst = '2001:db8::/32'
+        map_src = '1234:5678:90ab:cdef::/64'
+        ip4_pfx = '192.168.0.0/24'
+        tag = 'MAP-T Test Domain'
+
+        self.vapi.map_add_domain(ip6_prefix=map_dst,
+                                 ip4_prefix=ip4_pfx,
+                                 ip6_src=map_src,
+                                 ea_bits_len=16,
+                                 psid_offset=6,
+                                 psid_length=4,
+                                 mtu=1500,
+                                 tag=tag)
+
+        # Enable MAP-T on interfaces.
+        self.vapi.map_if_enable_disable(is_enable=1,
+                                        sw_if_index=self.pg0.sw_if_index,
+                                        is_translation=1)
+        self.vapi.map_if_enable_disable(is_enable=1,
+                                        sw_if_index=self.pg1.sw_if_index,
+                                        is_translation=1)
+
+        map_route = VppIpRoute(self,
+                               "2001:db8::",
+                               32,
+                               [VppRoutePath(self.pg1.remote_ip6,
+                                             self.pg1.sw_if_index,
+                                             proto=DpoProto.DPO_PROTO_IP6)])
+        map_route.add_vpp_config()
+
+        p_ether6 = Ether(dst=self.pg1.local_mac, src=self.pg1.remote_mac)
+        p_ip6 = IPv6(src='2001:db8:1f0::c0a8:1:f',
+                     dst='1234:5678:90ab:cdef:ac:1001:200:0')
+
+        # Send good IPv6 source port, ensure translated IPv4 received
+        payload = TCP(sport=0xabcd, dport=80)
+        p6 = (p_ether6 / p_ip6 / payload)
+        p4_translated = (IP(src='192.168.0.1',
+                            dst=self.pg0.remote_ip4) / payload)
+        p4_translated.id = 0
+        p4_translated.ttl -= 1
+        rx = self.send_and_expect(self.pg1, p6*1, self.pg0)
+        for p in rx:
+            self.validate(p[1], p4_translated)
+
+        # Send bad IPv6 source port, ensure translated IPv4 not received
+        payload = TCP(sport=0xdcba, dport=80)
+        p6 = (p_ether6 / p_ip6 / payload)
+        self.send_and_assert_no_replies(self.pg1, p6*1)
 
 if __name__ == '__main__':
     unittest.main(testRunner=VppTestRunner)

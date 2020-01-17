@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import unittest
 import binascii
@@ -15,8 +15,6 @@ from scapy.packet import Raw
 from scapy.layers.l2 import Ether, Dot1Q
 from scapy.layers.inet6 import IPv6, UDP, IPv6ExtHdrSegmentRouting
 from scapy.layers.inet import IP, UDP
-
-from scapy.utils import inet_pton, inet_ntop
 
 from util import ppp
 
@@ -117,7 +115,7 @@ class TestSRv6(VppTestCase):
         if any(ipv6):
             self.logger.debug(self.vapi.cli("show ip6 neighbors"))
         if any(ipv4):
-            self.logger.debug(self.vapi.cli("show ip arp"))
+            self.logger.debug(self.vapi.cli("show ip4 neighbors"))
         self.logger.debug(self.vapi.cli("show interface"))
         self.logger.debug(self.vapi.cli("show hardware"))
 

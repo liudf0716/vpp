@@ -191,7 +191,8 @@ ct_init_local_session (app_worker_t * client_wrk, app_worker_t * server_wrk,
     }
   seg = segment_manager_get_segment_w_lock (sm, seg_index);
 
-  rv = segment_manager_try_alloc_fifos (seg, props->rx_fifo_size,
+  rv = segment_manager_try_alloc_fifos (seg, ls->thread_index,
+					props->rx_fifo_size,
 					props->tx_fifo_size, &ls->rx_fifo,
 					&ls->tx_fifo);
   if (rv)
@@ -397,7 +398,7 @@ global_scope:
     return VNET_API_ERROR_APP_CONNECT_SCOPE;
 
   fib_proto = session_endpoint_fib_proto (sep);
-  table_index = application_session_table (app, fib_proto);
+  table_index = session_lookup_get_index_for_fib (fib_proto, sep->fib_index);
   ll = session_lookup_listener_wildcard (table_index, sep);
 
   if (ll)

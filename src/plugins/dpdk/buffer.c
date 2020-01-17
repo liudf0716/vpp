@@ -20,6 +20,7 @@
 #include <rte_mbuf.h>
 #include <rte_ethdev.h>
 #include <rte_vfio.h>
+#include <rte_version.h>
 
 #include <vlib/vlib.h>
 #include <dpdk/buffer.h>
@@ -40,7 +41,7 @@ dpdk_buffer_pool_init (vlib_main_t * vm, vlib_buffer_pool_t * bp)
   struct rte_mempool *mp, *nmp;
   struct rte_pktmbuf_pool_private priv;
   enum rte_iova_mode iova_mode;
-  u32 *bi;
+  u32 i;
   u8 *name = 0;
 
   u32 elt_size =
@@ -54,7 +55,7 @@ dpdk_buffer_pool_init (vlib_main_t * vm, vlib_buffer_pool_t * bp)
 
   /* normal mempool */
   name = format (name, "vpp pool %u%c", bp->index, 0);
-  mp = rte_mempool_create_empty ((char *) name, vec_len (bp->buffers),
+  mp = rte_mempool_create_empty ((char *) name, bp->n_buffers,
 				 elt_size, 512, sizeof (priv),
 				 bp->numa_node, 0);
   if (!mp)
@@ -68,7 +69,7 @@ dpdk_buffer_pool_init (vlib_main_t * vm, vlib_buffer_pool_t * bp)
 
   /* non-cached mempool */
   name = format (name, "vpp pool %u (no cache)%c", bp->index, 0);
-  nmp = rte_mempool_create_empty ((char *) name, vec_len (bp->buffers),
+  nmp = rte_mempool_create_empty ((char *) name, bp->n_buffers,
 				  elt_size, 0, sizeof (priv),
 				  bp->numa_node, 0);
   if (!nmp)
@@ -99,11 +100,10 @@ dpdk_buffer_pool_init (vlib_main_t * vm, vlib_buffer_pool_t * bp)
   iova_mode = rte_eal_iova_mode ();
 
   /* populate mempool object buffer header */
-  /* *INDENT-OFF* */
-  vec_foreach (bi, bp->buffers)
+  for (i = 0; i < bp->n_buffers; i++)
     {
       struct rte_mempool_objhdr *hdr;
-      vlib_buffer_t *b = vlib_get_buffer (vm, *bi);
+      vlib_buffer_t *b = vlib_get_buffer (vm, bp->buffers[i]);
       struct rte_mbuf *mb = rte_mbuf_from_vlib_buffer (b);
       hdr = (struct rte_mempool_objhdr *) RTE_PTR_SUB (mb, sizeof (*hdr));
       hdr->mp = mp;
@@ -114,7 +114,6 @@ dpdk_buffer_pool_init (vlib_main_t * vm, vlib_buffer_pool_t * bp)
       mp->populated_size++;
       nmp->populated_size++;
     }
-  /* *INDENT-ON* */
 
   /* call the object initializers */
   rte_mempool_obj_iter (mp, rte_pktmbuf_init, 0);
@@ -127,14 +126,12 @@ dpdk_buffer_pool_init (vlib_main_t * vm, vlib_buffer_pool_t * bp)
 					  (buffer_mem_start, *bp->buffers,
 					   0)), sizeof (struct rte_mbuf));
 
-  /* *INDENT-OFF* */
-  vec_foreach (bi, bp->buffers)
+  for (i = 0; i < bp->n_buffers; i++)
     {
       vlib_buffer_t *b;
-      b = vlib_buffer_ptr_from_index (buffer_mem_start, *bi, 0);
+      b = vlib_buffer_ptr_from_index (buffer_mem_start, bp->buffers[i], 0);
       vlib_buffer_copy_template (b, &bp->buffer_template);
     }
-  /* *INDENT-ON* */
 
   /* map DMA pages if at least one physical device exists */
   if (rte_eth_dev_count_avail ())
@@ -154,7 +151,12 @@ dpdk_buffer_pool_init (vlib_main_t * vm, vlib_buffer_pool_t * bp)
 	    pointer_to_uword (va) : pm->page_table[i];
 
 	  if (do_vfio_map &&
+#if RTE_VERSION < RTE_VERSION_NUM(19, 11, 0, 0)
 	      rte_vfio_dma_map (pointer_to_uword (va), pa, page_sz))
+#else
+	      rte_vfio_container_dma_map (RTE_VFIO_DEFAULT_CONTAINER_FD,
+					  pointer_to_uword (va), pa, page_sz))
+#endif
 	    do_vfio_map = 0;
 
 	  struct rte_mempool_memhdr *memhdr;

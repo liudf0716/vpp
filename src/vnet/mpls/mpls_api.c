@@ -360,7 +360,7 @@ send_mpls_tunnel_entry (u32 mti, void *arg)
   mp->_vl_msg_id = ntohs (VL_API_MPLS_TUNNEL_DETAILS);
   mp->context = ctx->context;
 
-  mp->mt_tunnel.mt_n_paths = ntohl (n);
+  mp->mt_tunnel.mt_n_paths = n;
   mp->mt_tunnel.mt_sw_if_index = ntohl (mt->mt_sw_if_index);
   mp->mt_tunnel.mt_tunnel_index = ntohl (mti);
   mp->mt_tunnel.mt_l2_only = ! !(MPLS_TUNNEL_FLAG_L2 & mt->mt_flags);
@@ -550,7 +550,7 @@ setup_message_id_table (api_main_t * am)
 static clib_error_t *
 mpls_api_hookup (vlib_main_t * vm)
 {
-  api_main_t *am = &api_main;
+  api_main_t *am = vlibapi_get_main ();
 
 #define _(N,n)                                                  \
     vl_msg_api_set_handlers(VL_API_##N, #n,                     \

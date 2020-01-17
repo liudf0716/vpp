@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import unittest
 
@@ -55,7 +55,6 @@ class TestSVS(VppTestCase):
         for i in self.pg_interfaces:
             i.unconfig_ip4()
             i.unconfig_ip6()
-            i.ip6_disable()
             i.set_table_ip4(0)
             i.set_table_ip6(0)
             i.admin_down()
@@ -70,27 +69,27 @@ class TestSVS(VppTestCase):
         pkts_0 = [(Ether(dst=self.pg0.local_mac, src=self.pg0.remote_mac) /
                    IP(src="1.1.1.1", dst=self.pg1.remote_ip4) /
                    UDP(sport=1234, dport=1234) /
-                   Raw('\xa5' * 100)),
+                   Raw(b'\xa5' * 100)),
                   (Ether(dst=self.pg0.local_mac, src=self.pg0.remote_mac) /
                    IP(src="2.2.2.2", dst=self.pg2.remote_ip4) /
                    UDP(sport=1234, dport=1234) /
-                   Raw('\xa5' * 100)),
+                   Raw(b'\xa5' * 100)),
                   (Ether(dst=self.pg0.local_mac, src=self.pg0.remote_mac) /
                    IP(src="3.3.3.3", dst=self.pg3.remote_ip4) /
                    UDP(sport=1234, dport=1234) /
-                   Raw('\xa5' * 100))]
+                   Raw(b'\xa5' * 100))]
         pkts_1 = [(Ether(dst=self.pg1.local_mac, src=self.pg1.remote_mac) /
                    IP(src="1.1.1.1", dst=self.pg1.remote_ip4) /
                    UDP(sport=1234, dport=1234) /
-                   Raw('\xa5' * 100)),
+                   Raw(b'\xa5' * 100)),
                   (Ether(dst=self.pg1.local_mac, src=self.pg1.remote_mac) /
                    IP(src="2.2.2.2", dst=self.pg2.remote_ip4) /
                    UDP(sport=1234, dport=1234) /
-                   Raw('\xa5' * 100)),
+                   Raw(b'\xa5' * 100)),
                   (Ether(dst=self.pg1.local_mac, src=self.pg1.remote_mac) /
                    IP(src="3.3.3.3", dst=self.pg3.remote_ip4) /
                    UDP(sport=1234, dport=1234) /
-                   Raw('\xa5' * 100))]
+                   Raw(b'\xa5' * 100))]
 
         #
         # before adding the SVS config all these packets are dropped when
@@ -143,13 +142,13 @@ class TestSVS(VppTestCase):
         p = (Ether(dst=self.pg0.local_mac, src=self.pg0.remote_mac) /
              IP(src=self.pg0.remote_ip4, dst=self.pg0.remote_ip4) /
              UDP(sport=1234, dport=1234) /
-             Raw('\xa5' * 100))
+             Raw(b'\xa5' * 100))
         self.send_and_expect(self.pg0, p * NUM_PKTS, self.pg0)
 
         p = (Ether(dst=self.pg1.local_mac, src=self.pg1.remote_mac) /
              IP(src=self.pg1.remote_ip4, dst=self.pg1.remote_ip4) /
              UDP(sport=1234, dport=1234) /
-             Raw('\xa5' * 100))
+             Raw(b'\xa5' * 100))
         self.send_and_expect(self.pg1, p * NUM_PKTS, self.pg1)
 
         #
@@ -197,27 +196,27 @@ class TestSVS(VppTestCase):
         pkts_0 = [(Ether(dst=self.pg0.local_mac, src=self.pg0.remote_mac) /
                    IPv6(src="2001:1::1", dst=self.pg1.remote_ip6) /
                    UDP(sport=1234, dport=1234) /
-                   Raw('\xa5' * 100)),
+                   Raw(b'\xa5' * 100)),
                   (Ether(dst=self.pg0.local_mac, src=self.pg0.remote_mac) /
                    IPv6(src="2001:2::1", dst=self.pg2.remote_ip6) /
                    UDP(sport=1234, dport=1234) /
-                   Raw('\xa5' * 100)),
+                   Raw(b'\xa5' * 100)),
                   (Ether(dst=self.pg0.local_mac, src=self.pg0.remote_mac) /
                    IPv6(src="2001:3::1", dst=self.pg3.remote_ip6) /
                    UDP(sport=1234, dport=1234) /
-                   Raw('\xa5' * 100))]
+                   Raw(b'\xa5' * 100))]
         pkts_1 = [(Ether(dst=self.pg1.local_mac, src=self.pg1.remote_mac) /
                    IPv6(src="2001:1::1", dst=self.pg1.remote_ip6) /
                    UDP(sport=1234, dport=1234) /
-                   Raw('\xa5' * 100)),
+                   Raw(b'\xa5' * 100)),
                   (Ether(dst=self.pg1.local_mac, src=self.pg1.remote_mac) /
                    IPv6(src="2001:2::1", dst=self.pg2.remote_ip6) /
                    UDP(sport=1234, dport=1234) /
-                   Raw('\xa5' * 100)),
+                   Raw(b'\xa5' * 100)),
                   (Ether(dst=self.pg1.local_mac, src=self.pg1.remote_mac) /
                    IPv6(src="2001:3::1", dst=self.pg3.remote_ip6) /
                    UDP(sport=1234, dport=1234) /
-                   Raw('\xa5' * 100))]
+                   Raw(b'\xa5' * 100))]
 
         #
         # before adding the SVS config all these packets are dropped when
@@ -273,13 +272,13 @@ class TestSVS(VppTestCase):
         p = (Ether(dst=self.pg0.local_mac, src=self.pg0.remote_mac) /
              IPv6(src=self.pg0.remote_ip6, dst=self.pg0.remote_ip6) /
              UDP(sport=1234, dport=1234) /
-             Raw('\xa5' * 100))
+             Raw(b'\xa5' * 100))
         self.send_and_expect(self.pg0, p * NUM_PKTS, self.pg0)
 
         p = (Ether(dst=self.pg1.local_mac, src=self.pg1.remote_mac) /
              IPv6(src=self.pg1.remote_ip6, dst=self.pg1.remote_ip6) /
              UDP(sport=1234, dport=1234) /
-             Raw('\xa5' * 100))
+             Raw(b'\xa5' * 100))
         self.send_and_expect(self.pg1, p * NUM_PKTS, self.pg1)
 
         #

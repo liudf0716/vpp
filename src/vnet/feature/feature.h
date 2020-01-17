@@ -219,6 +219,13 @@ vnet_feature_enable_disable (const char *arc_name, const char *node_name,
 			     void *feature_config,
 			     u32 n_feature_config_bytes);
 
+static_always_inline u32
+vnet_get_feature_count (u8 arc, u32 sw_if_index)
+{
+  vnet_feature_main_t *fm = &feature_main;
+  return (fm->feature_count_by_sw_if_index[arc][sw_if_index]);
+}
+
 static inline vnet_feature_config_main_t *
 vnet_get_feature_arc_config_main (u8 arc_index)
 {
@@ -439,12 +446,19 @@ clib_error_t *vnet_feature_arc_init
    vnet_config_main_t * vcm,
    char **feature_start_nodes,
    int num_feature_start_nodes,
+   char *last_in_arc,
    vnet_feature_registration_t * first_reg,
    vnet_feature_constraint_registration_t * first_const_set,
    char ***in_feature_nodes);
 
 void vnet_interface_features_show (vlib_main_t * vm, u32 sw_if_index,
 				   int verbose);
+
+typedef void (*vnet_feature_update_cb_t) (u32 sw_if_index,
+					  u8 arc_index,
+					  u8 is_enable, void *cb);
+
+extern void vnet_feature_register (vnet_feature_update_cb_t cb, void *data);
 
 #endif /* included_feature_h */
 

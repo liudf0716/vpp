@@ -114,7 +114,9 @@ typedef struct application_
   /** Preferred tls engine */
   u8 tls_engine;
 
-  u64 *quicly_ctx;
+  /** quic initialization vector */
+  char quic_iv[17];
+  u8 quic_iv_set;
 
 } application_t;
 
@@ -139,6 +141,11 @@ typedef struct app_main_
    * Pool from which we allocate certificates (key, cert)
    */
   app_cert_key_pair_t *cert_key_pair_store;
+
+  /*
+   * Last registered crypto engine type
+   */
+  crypto_engine_type_t last_crypto_engine;
 } app_main_t;
 
 typedef struct app_init_args_
@@ -274,6 +281,8 @@ session_t *app_worker_proxy_listener (app_worker_t * app, u8 fib_proto,
 				      u8 transport_proto);
 u8 *format_app_worker (u8 * s, va_list * args);
 u8 *format_app_worker_listener (u8 * s, va_list * args);
+u8 *format_crypto_engine (u8 * s, va_list * args);
+u8 *format_crypto_context (u8 * s, va_list * args);
 void app_worker_format_connects (app_worker_t * app_wrk, int verbose);
 int vnet_app_worker_add_del (vnet_app_worker_add_del_args_t * a);
 
@@ -290,6 +299,9 @@ int mq_send_session_connected_cb (u32 app_wrk_index, u32 api_context,
 				  session_t * s, u8 is_fail);
 void mq_send_unlisten_reply (app_worker_t * app_wrk, session_handle_t sh,
 			     u32 context, int rv);
+
+crypto_engine_type_t app_crypto_engine_type_add (void);
+u8 app_crypto_engine_n_types (void);
 
 #endif /* SRC_VNET_SESSION_APPLICATION_H_ */
 

@@ -58,7 +58,7 @@ If you are concerned more with configuration not performance the vmxnet3 driver
 can be set to **interrupt** mode in VPP. This will save a great deal on battery
 usage. Do this with the following
 
-VMware Workstatiom PRO 15 for Linux
+VMware Workstation PRO 15 for Linux
 -----------------------------------
 
 VMware Workstation does not have a menu option to change the default driver
@@ -113,10 +113,7 @@ For systems without IOMMU only, enable unsafe NOIOMMU mode
 
     $ echo Y | sudo tee /sys/module/vfio/parameters/enable_unsafe_noiommu_mode
 
-To bind interface to vfio-pci first install the :ref:`configutil`. This will
-download the dpdk_devbind.py script. It is located in
-*/usr/vpp/vpp-config/scripts* with Centos and
-*/usr/local/vpp/vpp-config/scripts* with Ubuntu.
+To bind interface to vfio-pci first install get the dpdk_devbind.py script.
 
 Bind the driver with the following commands:
 

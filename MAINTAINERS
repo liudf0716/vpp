@@ -49,6 +49,11 @@ I:	vppinfra
 M:	Dave Barach <dave@barachs.net>
 F:	src/vppinfra/
 
+Physical Memory Allocator
+I:	pmalloc
+M:	Damjan Marion <damarion@cisco.com>
+F:	src/vppinfra/pmalloc.[ch]
+
 Vector Library
 I:	vlib
 M:	Dave Barach <dave@barachs.net>
@@ -68,7 +73,7 @@ M:	Dave Barach <dave@barachs.net>
 F:	src/vlibapi/
 F:	src/vlibmemory/
 
-VNET Bidirectonal Forwarding Detection (BFD)
+VNET Bidirectional Forwarding Detection (BFD)
 I:	bfd
 M:	Klement Sekera <ksekera@cisco.com>
 F:	src/vnet/bfd/
@@ -80,26 +85,31 @@ F:	src/vnet/classify
 
 VNET Device Drivers
 I:	devices
+Y:	src/vnet/devices/af_packet/FEATURE.yaml
+Y:	src/vnet/devices/netmap/FEATURE.yaml
+Y:	src/vnet/devices/pipe/FEATURE.yaml
 M:	Damjan Marion <damarion@cisco.com>
 F:	src/vnet/devices/
 
 VNET TAP Drivers
 I:	tap
+Y:	src/vnet/devices/tap/FEATURE.yaml
 M:	Damjan Marion <damarion@cisco.com>
 M:	Steven Luong <sluong@cisco.com>
 M:	Mohsin Kazmi <sykazmi@cisco.com>
 F:	src/vnet/devices/tap/
 
 VNET Native Virtio Drivers
-I:      virtio
-M:      Mohsin Kazmi <sykazmi@cisco.com>
-F:      src/vnet/devices/virtio/
+I:	virtio
+Y:	src/vnet/devices/virtio/FEATURE.yaml
+M:	Mohsin Kazmi <sykazmi@cisco.com>
+M:	Damjan Marion <damarion@cisco.com>
+F:	src/vnet/devices/virtio/
 
-VNET Etherent
+VNET Ethernet
 I:	ethernet
 M:	Dave Barach <dave@barachs.net>
 M:	Damjan Marion <damarion@cisco.com>
-M:	Neale Ranns <nranns@cisco.com>
 F:	src/vnet/ethernet/
 
 VNET Feature Arcs
@@ -116,10 +126,21 @@ F:	src/vnet/mfib/
 F:	src/vnet/dpo
 F:	src/vnet/adj
 
-VNET IPv4 and IPv6 LPM
+VNET IPv4 LPM
 I:	ip
 M:	Dave Barach <dave@barachs.net>
 F:	src/vnet/ip/
+
+VNET IPv6 LPM
+I:	ip6
+M:	Neale Ranns <nranns@cisco.com>
+M:	Jon Loeliger <jdl@netgate.com>
+F:	src/vnet/ip/
+
+VNET IP Neighbors
+I:	ip-neighbor
+M:	Neale Ranns <nranns@cisco.com>
+F:	src/vnet/ip-neighbor
 
 VNET QoS
 I:	qos
@@ -160,6 +181,11 @@ I:	cop
 M:	Dave Barach <dave@barachs.net>
 F:	src/vnet/cop/
 
+VNET NHRP
+I:	nhrp
+M:	Neale Ranns <nranns@cisco.com>
+F:	src/vnet/nhrp/
+
 Crypto IA32 Plugin
 I:	crypto-ia32
 M:	Damjan Marion <damarion@cisco.com>
@@ -187,19 +213,28 @@ F:	src/vnet/lldp/
 
 VNET LISP
 I:	lisp
+Y:	src/vnet/lisp-cp/FEATURE.yaml
+Y:	src/vnet/lisp-gpe/FEATURE.yaml
 M:	Florin Coras <fcoras@cisco.com>
 F:	src/vnet/lisp-cp/
 F:	src/vnet/lisp-gpe/
 
+VNET GRE
+I:	gre
+M:	Neale Ranns <nranns@cisco.com>
+F:	src/vnet/gre/
+
 VNET GSO
-I: gso
-M: Andrew Yourtchenko <ayourtch@gmail.com>
-F: src/vnet/interface_output.c
+I:	gso
+M:	Andrew Yourtchenko <ayourtch@gmail.com>
+M:	Mohsin Kazmi <sykazmi@cisco.com>
+F:	src/vnet/interface_output.c
 
 Plugin - MAP
 I:	map
 Y:	src/plugins/map/FEATURE.yaml
 M:	Ole Troan <ot@cisco.com>
+M:	Jon Loeliger <jdl@netgate.com>
 F:	src/plugins/map
 
 VNET MPLS
@@ -214,16 +249,19 @@ F:	src/vnet/bier/
 
 VNET Session Layer
 I:	session
+Y:	src/vnet/session/FEATURE.yaml
 M:	Florin Coras <fcoras@cisco.com>
 F:	src/vnet/session
 
 VNET TCP
 I:	tcp
+Y:	src/vnet/tcp/FEATURE.yaml
 M:	Florin Coras <fcoras@cisco.com>
 F:	src/vnet/tcp
 
 VNET UDP
 I:	udp
+Y:	src/vnet/udp/FEATURE.yaml
 M:	Florin Coras <fcoras@cisco.com>
 F:	src/vnet/udp
 
@@ -256,6 +294,7 @@ M:	Ping Yu <ping.yu@intel.com>
 F:	src/vnet/tls
 F:	src/plugins/tlsopenssl
 F:	src/plugins/tlsmbedtls
+F:	src/plugins/tlspicotls
 
 VNET SYSLOG
 I:	syslog
@@ -267,6 +306,33 @@ I:	dhcp
 M:	Dave Barach <dave@barachs.net>
 M:	Neale Ranns <nranns@cisco.com>
 F:	src/plugins/dhcp/
+
+Plugin - ARP
+I:	arp
+M:	Dave Barach <dave@barachs.net>
+M:	Neale Ranns <nranns@cisco.com>
+F:	src/plugins/arp/
+
+Plugin - IP6 Neighbor Discovery
+I:	ip6-nd
+M:	Dave Barach <dave@barachs.net>
+M:	Neale Ranns <nranns@cisco.com>
+F:	src/plugins/ip6-nd/
+
+VNET GENEVE
+I:	geneve
+M:	N/A
+F:	src/vnet/geneve/
+
+VNET FLOW
+I:	flow
+M:	Damjan Marion <damarion@cisco.com>
+F:	src/vnet/flow/
+
+VNET Classify
+I:	classify
+M:	N/A
+F:	src/vnet/classify/
 
 Plugin - Access Control List (ACL) Based Forwarding
 I:	abf
@@ -366,10 +432,20 @@ I:	marvell
 M:	Damjan Marion <damarion@cisco.com>
 F:	src/plugins/marvell/
 
+Plugin - performance counter
+I:	perfmon
+M:	Dave Barach <dave@barachs.net>
+F:	src/plugins/perfmon/
+
 Plugin - PPPoE
 I:	pppoe
 M:	Hongjun Ni <hongjun.ni@intel.com>
 F:	src/plugins/pppoe/
+
+Plugin - Ping
+I:	ping
+M:	Andrew Yourtchenko <ayourtch@gmail.com>
+F:	src/plugins/ping
 
 Plugin - IPv6 Segment Routing Dynamic Proxy
 I:	srv6-ad
@@ -385,6 +461,12 @@ Plugin - IPv6 Segment Routing Static Proxy
 I:	srv6-as
 M:	Francois Clad <fclad@cisco.com>
 F:	src/plugins/srv6-as/
+
+Plugin - IPv6 Segment Routing Mobile
+I:      srv6-mobile
+M:      Tetsuya Murakami <tetsuya.mrk@gmail.com>
+M:	Satoru Matsushima <satoru.matsushima@gmail.com>
+F:      src/plugins/srv6-mobile/
 
 Plugin - Link Aggregation Control Protocol
 I:	lacp
@@ -411,8 +493,20 @@ F:      src/plugins/mactime/
 
 Plugin - Network Delay Simulator
 I:	nsim
+Y:	src/plugins/nsim/FEATURE.yaml
 M:	Dave Barach <dave@barachs.net>
 F:	src/plugins/nsim/
+
+Plugin - Buffer Metadata Modification Tracker
+I:	mdata
+M:	Dave Barach <dave@barachs.net>
+F:	src/plugins/mdata/
+
+Plugin - Unit Tests
+I:	unittest
+M:	Dave Barach <dave@barachs.net>
+M:	Florin Coras <fcoras@cisco.com
+F:	src/plugins/unittest/
 
 Test Infrastructure
 I:	tests
@@ -482,6 +576,7 @@ M:	Aloys Augustin <aloaugus@cisco.com>
 M:	Nathan Skrzypczak <nathan.skrzypczak@gmail.com>
 M:	Dave Wallace <dwallacelf@gmail.com>
 M:	Florin Coras <fcoras@cisco.com>
+Y:	src/plugins/quic/FEATURE.yaml
 F:	src/plugins/quic/
 
 libmemif
@@ -491,6 +586,7 @@ F:	extras/libmemif
 
 VPP Comms Library
 I:	vcl
+Y:	src/vnet/vcl/FEATURE.yaml
 M:	Florin Coras <fcoras@cisco.com>
 F:	src/vcl
 
@@ -517,7 +613,6 @@ F:	src/plugins/hs_apps/
 Python binding for the VPP API
 I:	papi
 M:	Ole Troan <ot@cisco.com>
-M:	Paul Vinciguerra <pvinci@vinciconsulting.com>
 F:	src/vpp-api/python
 
 Plugin - SCTP
@@ -554,6 +649,16 @@ F:	src/plugins/ioam
 Awkward chained buffer geometry tool
 I:	oddbuf
 F:	src/plugins/oddbuf
+
+VPP Config Tooling
+I:	vpp_config
+M:	John DeNisco <jdenisco@cisco.com>
+F:	extras/vpp_config
+
+bash functions
+I:	bash
+M:	Dave Wallace <dwallacelf@gmail.com>
+F:	extras/bash/
 
 THE REST
 I:	misc

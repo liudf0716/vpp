@@ -158,11 +158,19 @@ vcl_worker_cleanup (vcl_worker_t * wrk, u8 notify_vpp)
   clib_spinlock_lock (&vcm->workers_lock);
   if (notify_vpp)
     {
+      /* Notify vpp that the worker is going away */
       if (wrk->wrk_index == vcl_get_worker_index ())
 	vcl_send_app_worker_add_del (0 /* is_add */ );
       else
 	vcl_send_child_worker_del (wrk);
+
+      /* Disconnect the binary api */
+      if (vec_len (vcm->workers) == 1)
+	vppcom_disconnect_from_vpp ();
+      else
+	vl_client_send_disconnect (1 /* vpp should cleanup */ );
     }
+
   if (wrk->mqs_epfd > 0)
     close (wrk->mqs_epfd);
   hash_free (wrk->session_index_by_vpp_handles);
@@ -283,40 +291,10 @@ vcl_worker_ctrl_mq (vcl_worker_t * wrk)
 }
 
 void
-vcl_segment_table_add (u64 segment_handle, u32 svm_segment_index)
-{
-  clib_rwlock_writer_lock (&vcm->segment_table_lock);
-  hash_set (vcm->segment_table, segment_handle, svm_segment_index);
-  clib_rwlock_writer_unlock (&vcm->segment_table_lock);
-}
-
-u32
-vcl_segment_table_lookup (u64 segment_handle)
-{
-  uword *seg_indexp;
-
-  clib_rwlock_reader_lock (&vcm->segment_table_lock);
-  seg_indexp = hash_get (vcm->segment_table, segment_handle);
-  clib_rwlock_reader_unlock (&vcm->segment_table_lock);
-
-  if (!seg_indexp)
-    return VCL_INVALID_SEGMENT_INDEX;
-  return ((u32) * seg_indexp);
-}
-
-void
-vcl_segment_table_del (u64 segment_handle)
-{
-  clib_rwlock_writer_lock (&vcm->segment_table_lock);
-  hash_unset (vcm->segment_table, segment_handle);
-  clib_rwlock_writer_unlock (&vcm->segment_table_lock);
-}
-
-void
 vcl_cleanup_bapi (void)
 {
   socket_client_main_t *scm = &socket_client_main;
-  api_main_t *am = &api_main;
+  api_main_t *am = vlibapi_get_main ();
 
   am->my_client_index = ~0;
   am->my_registration = 0;
@@ -396,6 +374,72 @@ vcl_session_write_ready (vcl_session_t * session)
 
   return svm_fifo_max_enqueue_prod (session->tx_fifo);
 }
+
+int
+vcl_segment_attach (u64 segment_handle, char *name, ssvm_segment_type_t type,
+		    int fd)
+{
+  fifo_segment_create_args_t _a, *a = &_a;
+  int rv;
+
+  memset (a, 0, sizeof (*a));
+  a->segment_name = (char *) name;
+  a->segment_type = type;
+
+  if (type == SSVM_SEGMENT_MEMFD)
+    a->memfd_fd = fd;
+
+  clib_rwlock_writer_lock (&vcm->segment_table_lock);
+
+  if ((rv = fifo_segment_attach (&vcm->segment_main, a)))
+    {
+      clib_warning ("svm_fifo_segment_attach ('%s') failed", name);
+      return rv;
+    }
+  hash_set (vcm->segment_table, segment_handle, a->new_segment_indices[0]);
+
+  clib_rwlock_writer_unlock (&vcm->segment_table_lock);
+
+  vec_reset_length (a->new_segment_indices);
+  return 0;
+}
+
+u32
+vcl_segment_table_lookup (u64 segment_handle)
+{
+  uword *seg_indexp;
+
+  clib_rwlock_reader_lock (&vcm->segment_table_lock);
+  seg_indexp = hash_get (vcm->segment_table, segment_handle);
+  clib_rwlock_reader_unlock (&vcm->segment_table_lock);
+
+  if (!seg_indexp)
+    return VCL_INVALID_SEGMENT_INDEX;
+  return ((u32) * seg_indexp);
+}
+
+void
+vcl_segment_detach (u64 segment_handle)
+{
+  fifo_segment_main_t *sm = &vcm->segment_main;
+  fifo_segment_t *segment;
+  u32 segment_index;
+
+  segment_index = vcl_segment_table_lookup (segment_handle);
+  if (segment_index == (u32) ~ 0)
+    return;
+
+  clib_rwlock_writer_lock (&vcm->segment_table_lock);
+
+  segment = fifo_segment_get_segment (sm, segment_index);
+  fifo_segment_delete (sm, segment);
+  hash_unset (vcm->segment_table, segment_handle);
+
+  clib_rwlock_writer_unlock (&vcm->segment_table_lock);
+
+  VDBG (0, "detached segment %u handle %u", segment_index, segment_handle);
+}
+
 
 /*
  * fd.io coding-style-patch-verification: ON

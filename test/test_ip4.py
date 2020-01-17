@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 import binascii
 import random
 import socket
@@ -13,14 +13,14 @@ from six import moves
 
 from framework import VppTestCase, VppTestRunner
 from util import ppp
-from vpp_ip import VppIpPrefix
 from vpp_ip_route import VppIpRoute, VppRoutePath, VppIpMRoute, \
     VppMRoutePath, MRouteItfFlags, MRouteEntryFlags, VppMplsIpBind, \
     VppMplsTable, VppIpTable, FibPathType, find_route, \
-    VppIpInterfaceAddress
-from vpp_ip import VppIpAddress
+    VppIpInterfaceAddress, find_route_in_dump, find_mroute_in_dump
 from vpp_sub_interface import VppSubInterface, VppDot1QSubint, VppDot1ADSubint
 from vpp_papi import VppEnum
+from vpp_neighbor import VppNeighbor
+from vpp_lo_interface import VppLoInterface
 
 NUM_PKTS = 67
 
@@ -89,7 +89,7 @@ class TestIPv4(VppTestCase):
         super(TestIPv4, self).tearDown()
 
     def show_commands_at_teardown(self):
-        self.logger.info(self.vapi.cli("show ip arp"))
+        self.logger.info(self.vapi.cli("show ip4 neighbors"))
         # info(self.vapi.cli("show ip fib"))  # many entries
 
     def modify_packet(self, src_if, packet_size, pkt):
@@ -100,7 +100,7 @@ class TestIPv4(VppTestCase):
         :param int packet_size: Required packet size.
         :param Scapy pkt: Packet to be modified.
         """
-        dst_if_idx = packet_size / 10 % 2
+        dst_if_idx = int(packet_size / 10 % 2)
         dst_if = self.flows[src_if][dst_if_idx]
         info = self.create_packet_info(src_if, dst_if)
         payload = self.info_to_payload(info)
@@ -257,11 +257,9 @@ class TestIPv4IfAddrRoute(VppTestCase):
         """
 
         # create two addresses, verify route not present
-        if_addr1 = VppIpInterfaceAddress(self, self.pg0,
-                                         VppIpAddress("10.10.10.10"), 24)
-        if_addr2 = VppIpInterfaceAddress(self, self.pg0,
-                                         VppIpAddress("10.10.10.20"), 24)
-        self.assertFalse(if_addr1.query_vpp_config())  # 10.10.10.0/24
+        if_addr1 = VppIpInterfaceAddress(self, self.pg0, "10.10.10.10", 24)
+        if_addr2 = VppIpInterfaceAddress(self, self.pg0, "10.10.10.20", 24)
+        self.assertFalse(if_addr1.query_vpp_config())  # 10.10.10.10/24
         self.assertFalse(find_route(self, "10.10.10.10", 32))
         self.assertFalse(find_route(self, "10.10.10.20", 32))
         self.assertFalse(find_route(self, "10.10.10.255", 32))
@@ -269,7 +267,7 @@ class TestIPv4IfAddrRoute(VppTestCase):
 
         # configure first address, verify route present
         if_addr1.add_vpp_config()
-        self.assertTrue(if_addr1.query_vpp_config())  # 10.10.10.0/24
+        self.assertTrue(if_addr1.query_vpp_config())  # 10.10.10.10/24
         self.assertTrue(find_route(self, "10.10.10.10", 32))
         self.assertFalse(find_route(self, "10.10.10.20", 32))
         self.assertTrue(find_route(self, "10.10.10.255", 32))
@@ -278,7 +276,8 @@ class TestIPv4IfAddrRoute(VppTestCase):
         # configure second address, delete first, verify route not removed
         if_addr2.add_vpp_config()
         if_addr1.remove_vpp_config()
-        self.assertTrue(if_addr1.query_vpp_config())  # 10.10.10.0/24
+        self.assertFalse(if_addr1.query_vpp_config())  # 10.10.10.10/24
+        self.assertTrue(if_addr2.query_vpp_config())  # 10.10.10.20/24
         self.assertFalse(find_route(self, "10.10.10.10", 32))
         self.assertTrue(find_route(self, "10.10.10.20", 32))
         self.assertTrue(find_route(self, "10.10.10.255", 32))
@@ -286,7 +285,7 @@ class TestIPv4IfAddrRoute(VppTestCase):
 
         # delete second address, verify route removed
         if_addr2.remove_vpp_config()
-        self.assertFalse(if_addr1.query_vpp_config())  # 10.10.10.0/24
+        self.assertFalse(if_addr2.query_vpp_config())  # 10.10.10.20/24
         self.assertFalse(find_route(self, "10.10.10.10", 32))
         self.assertFalse(find_route(self, "10.10.10.20", 32))
         self.assertFalse(find_route(self, "10.10.10.255", 32))
@@ -377,7 +376,7 @@ class TestICMPEcho(VppTestCase):
 
         icmp_id = 0xb
         icmp_seq = 5
-        icmp_load = '\x0a' * 18
+        icmp_load = b'\x0a' * 18
         p_echo_request = (Ether(src=self.pg0.remote_mac,
                                 dst=self.pg0.local_mac) /
                           IP(src=self.pg0.remote_ip4, dst=self.pg0.local_ip4) /
@@ -450,11 +449,11 @@ class TestIPv4FibCrud(VppTestCase):
         pkts = []
 
         for _ in range(count):
-            dst_addr = random.choice(routes).prefix.address
+            dst_addr = random.choice(routes).prefix.network_address
             info = self.create_packet_info(src_if, dst_if)
             payload = self.info_to_payload(info)
             p = (Ether(dst=src_if.local_mac, src=src_if.remote_mac) /
-                 IP(src=src_if.remote_ip4, dst=dst_addr) /
+                 IP(src=src_if.remote_ip4, dst=str(dst_addr)) /
                  UDP(sport=1234, dport=1234) /
                  Raw(payload))
             info.data = p.copy()
@@ -490,11 +489,15 @@ class TestIPv4FibCrud(VppTestCase):
 
     def verify_route_dump(self, routes):
         for r in routes:
-            self.assertTrue(find_route(self, r.prefix.address, r.prefix.len))
+            self.assertTrue(find_route(self,
+                                       r.prefix.network_address,
+                                       r.prefix.prefixlen))
 
     def verify_not_in_route_dump(self, routes):
         for r in routes:
-            self.assertFalse(find_route(self, r.prefix.address, r.prefix.len))
+            self.assertFalse(find_route(self,
+                                        r.prefix.network_address,
+                                        r.prefix.prefixlen))
 
     @classmethod
     def setUpClass(cls):
@@ -687,7 +690,7 @@ class TestIPNull(VppTestCase):
                            dst=self.pg0.local_mac) /
                      IP(src=self.pg0.remote_ip4, dst="10.0.0.1") /
                      UDP(sport=1234, dport=1234) /
-                     Raw('\xa5' * 100))
+                     Raw(b'\xa5' * 100))
         self.pg0.add_stream(p_unreach)
         self.pg_enable_capture(self.pg_interfaces)
         self.pg_start()
@@ -720,7 +723,7 @@ class TestIPNull(VppTestCase):
                             dst=self.pg0.local_mac) /
                       IP(src=self.pg0.remote_ip4, dst="10.0.0.2") /
                       UDP(sport=1234, dport=1234) /
-                      Raw('\xa5' * 100))
+                      Raw(b'\xa5' * 100))
 
         self.pg0.add_stream(p_prohibit)
         self.pg_enable_capture(self.pg_interfaces)
@@ -743,7 +746,7 @@ class TestIPNull(VppTestCase):
                    dst=self.pg0.local_mac) /
              IP(src=self.pg0.remote_ip4, dst="1.1.1.1") /
              UDP(sport=1234, dport=1234) /
-             Raw('\xa5' * 100))
+             Raw(b'\xa5' * 100))
 
         r1 = VppIpRoute(self, "1.1.1.0", 24,
                         [VppRoutePath(self.pg1.remote_ip4,
@@ -819,12 +822,12 @@ class TestIPDisabled(VppTestCase):
                     dst=self.pg1.local_mac) /
               IP(src="10.10.10.10", dst=self.pg0.remote_ip4) /
               UDP(sport=1234, dport=1234) /
-              Raw('\xa5' * 100))
+              Raw(b'\xa5' * 100))
         pm = (Ether(src=self.pg1.remote_mac,
                     dst=self.pg1.local_mac) /
               IP(src="10.10.10.10", dst="232.1.1.1") /
               UDP(sport=1234, dport=1234) /
-              Raw('\xa5' * 100))
+              Raw(b'\xa5' * 100))
 
         #
         # PG1 does not forward IP traffic
@@ -908,7 +911,7 @@ class TestIPSubNets(VppTestCase):
                    dst=self.pg1.local_mac) /
              IP(dst="10.10.10.10", src=self.pg0.local_ip4) /
              UDP(sport=1234, dport=1234) /
-             Raw('\xa5' * 100))
+             Raw(b'\xa5' * 100))
 
         self.pg1.add_stream(p)
         self.pg_enable_capture(self.pg_interfaces)
@@ -922,18 +925,18 @@ class TestIPSubNets(VppTestCase):
 
         self.vapi.sw_interface_add_del_address(
             sw_if_index=self.pg0.sw_if_index,
-            prefix=VppIpPrefix("10.10.10.10", 16).encode())
+            prefix="10.10.10.10/16")
 
         pn = (Ether(src=self.pg1.remote_mac,
                     dst=self.pg1.local_mac) /
               IP(dst="10.10.0.0", src=self.pg0.local_ip4) /
               UDP(sport=1234, dport=1234) /
-              Raw('\xa5' * 100))
+              Raw(b'\xa5' * 100))
         pb = (Ether(src=self.pg1.remote_mac,
                     dst=self.pg1.local_mac) /
               IP(dst="10.10.255.255", src=self.pg0.local_ip4) /
               UDP(sport=1234, dport=1234) /
-              Raw('\xa5' * 100))
+              Raw(b'\xa5' * 100))
 
         self.send_and_assert_no_replies(self.pg1, pn, "IP Network address")
         self.send_and_assert_no_replies(self.pg1, pb, "IP Broadcast address")
@@ -941,7 +944,8 @@ class TestIPSubNets(VppTestCase):
         # remove the sub-net and we are forwarding via the cover again
         self.vapi.sw_interface_add_del_address(
             sw_if_index=self.pg0.sw_if_index,
-            prefix=VppIpPrefix("10.10.10.10", 16).encode(), is_add=0)
+            prefix="10.10.10.10/16",
+            is_add=0)
 
         self.pg1.add_stream(pn)
         self.pg_enable_capture(self.pg_interfaces)
@@ -960,13 +964,13 @@ class TestIPSubNets(VppTestCase):
 
         self.vapi.sw_interface_add_del_address(
             sw_if_index=self.pg0.sw_if_index,
-            prefix=VppIpPrefix("10.10.10.10", 31).encode())
+            prefix="10.10.10.10/31")
 
         pn = (Ether(src=self.pg1.remote_mac,
                     dst=self.pg1.local_mac) /
               IP(dst="10.10.10.11", src=self.pg0.local_ip4) /
               UDP(sport=1234, dport=1234) /
-              Raw('\xa5' * 100))
+              Raw(b'\xa5' * 100))
 
         self.pg1.add_stream(pn)
         self.pg_enable_capture(self.pg_interfaces)
@@ -977,7 +981,7 @@ class TestIPSubNets(VppTestCase):
         # remove the sub-net and we are forwarding via the cover again
         self.vapi.sw_interface_add_del_address(
             sw_if_index=self.pg0.sw_if_index,
-            prefix=VppIpPrefix("10.10.10.10", 31).encode(), is_add=0)
+            prefix="10.10.10.10/31", is_add=0)
 
         self.pg1.add_stream(pn)
         self.pg_enable_capture(self.pg_interfaces)
@@ -1052,7 +1056,7 @@ class TestIPLoadBalance(VppTestCase):
         for ii in range(NUM_PKTS):
             port_ip_hdr = (IP(dst="10.0.0.1", src="20.0.0.1") /
                            UDP(sport=1234, dport=1234 + ii) /
-                           Raw('\xa5' * 100))
+                           Raw(b'\xa5' * 100))
             port_ip_pkts.append((Ether(src=self.pg0.remote_mac,
                                        dst=self.pg0.local_mac) /
                                  port_ip_hdr))
@@ -1063,7 +1067,7 @@ class TestIPLoadBalance(VppTestCase):
 
             src_ip_hdr = (IP(dst="10.0.0.1", src="20.0.0.%d" % ii) /
                           UDP(sport=1234, dport=1234) /
-                          Raw('\xa5' * 100))
+                          Raw(b'\xa5' * 100))
             src_ip_pkts.append((Ether(src=self.pg0.remote_mac,
                                       dst=self.pg0.local_mac) /
                                 src_ip_hdr))
@@ -1132,12 +1136,12 @@ class TestIPLoadBalance(VppTestCase):
                                     dst=self.pg0.local_mac) /
                               IP(dst="1.1.1.1", src="20.0.0.1") /
                               UDP(sport=1234, dport=1234 + ii) /
-                              Raw('\xa5' * 100)))
+                              Raw(b'\xa5' * 100)))
             src_pkts.append((Ether(src=self.pg0.remote_mac,
                                    dst=self.pg0.local_mac) /
                              IP(dst="1.1.1.1", src="20.0.0.%d" % ii) /
                              UDP(sport=1234, dport=1234) /
-                             Raw('\xa5' * 100)))
+                             Raw(b'\xa5' * 100)))
 
         route_10_0_0_2 = VppIpRoute(self, "10.0.0.2", 32,
                                     [VppRoutePath(self.pg3.remote_ip4,
@@ -1220,7 +1224,7 @@ class TestIPLoadBalance(VppTestCase):
                                     dst=self.pg0.local_mac) /
                               IP(dst="1.1.1.2", src="20.0.0.2") /
                               UDP(sport=1234, dport=1234 + ii) /
-                              Raw('\xa5' * 100)))
+                              Raw(b'\xa5' * 100)))
 
         route_10_0_0_3 = VppIpRoute(self, "10.0.0.3", 32,
                                     [VppRoutePath(self.pg3.remote_ip4,
@@ -1256,7 +1260,7 @@ class TestIPLoadBalance(VppTestCase):
                                    dst=self.pg0.local_mac) /
                              IP(dst="10.0.0.3", src="20.0.0.2") /
                              UDP(sport=1234, dport=1234 + ii) /
-                             Raw('\xa5' * 100))
+                             Raw(b'\xa5' * 100))
 
         self.send_and_expect_one_itf(self.pg0, port_pkts, self.pg4)
 
@@ -1308,7 +1312,7 @@ class TestIPVlan0(VppTestCase):
                 IP(dst=self.pg1.remote_ip4,
                    src=self.pg0.remote_ip4) /
                 UDP(sport=1234, dport=1234) /
-                Raw('\xa5' * 100)) * NUM_PKTS
+                Raw(b'\xa5' * 100)) * NUM_PKTS
 
         #
         # Expect that packets sent on VLAN-0 are forwarded on the
@@ -1369,7 +1373,7 @@ class TestIPPunt(VppTestCase):
                    dst=self.pg0.local_mac) /
              IP(src=self.pg0.remote_ip4, dst=self.pg0.local_ip4) /
              UDP(sport=1234, dport=1234) /
-             Raw('\xa5' * 100))
+             Raw(b'\xa5' * 100))
 
         pkts = p * 1025
 
@@ -1534,12 +1538,12 @@ class TestIPDeag(VppTestCase):
                        dst=self.pg0.local_mac) /
                  IP(src="5.5.5.5", dst="1.1.1.1") /
                  TCP(sport=1234, dport=1234) /
-                 Raw('\xa5' * 100))
+                 Raw(b'\xa5' * 100))
         p_src = (Ether(src=self.pg0.remote_mac,
                        dst=self.pg0.local_mac) /
                  IP(src="2.2.2.2", dst="1.1.1.2") /
                  TCP(sport=1234, dport=1234) /
-                 Raw('\xa5' * 100))
+                 Raw(b'\xa5' * 100))
         pkts_dst = p_dst * 257
         pkts_src = p_src * 257
 
@@ -1582,7 +1586,7 @@ class TestIPDeag(VppTestCase):
                      dst=self.pg0.local_mac) /
                IP(src="2.2.2.4", dst="2.2.2.3") /
                TCP(sport=1234, dport=1234) /
-               Raw('\xa5' * 100))
+               Raw(b'\xa5' * 100))
 
         self.send_and_assert_no_replies(self.pg0, p_l * 257,
                                         "IP lookup loop")
@@ -1630,7 +1634,7 @@ class TestIPInput(VppTestCase):
                       dst=self.pg1.remote_ip4,
                       len=40) /
                    UDP(sport=1234, dport=1234) /
-                   Raw('\xa5' * 100))
+                   Raw(b'\xa5' * 100))
 
         rx = self.send_and_expect(self.pg0, p_short * NUM_PKTS, self.pg1)
 
@@ -1643,7 +1647,7 @@ class TestIPInput(VppTestCase):
                      dst=self.pg1.remote_ip4,
                      len=400) /
                   UDP(sport=1234, dport=1234) /
-                  Raw('\xa5' * 100))
+                  Raw(b'\xa5' * 100))
 
         rx = self.send_and_assert_no_replies(self.pg0, p_long * NUM_PKTS,
                                              "too long")
@@ -1657,7 +1661,7 @@ class TestIPInput(VppTestCase):
                        dst=self.pg1.remote_ip4,
                        chksum=400) /
                     UDP(sport=1234, dport=1234) /
-                    Raw('\xa5' * 100))
+                    Raw(b'\xa5' * 100))
 
         rx = self.send_and_assert_no_replies(self.pg0, p_chksum * NUM_PKTS,
                                              "bad checksum")
@@ -1671,7 +1675,7 @@ class TestIPInput(VppTestCase):
                     dst=self.pg1.remote_ip4,
                     version=3) /
                  UDP(sport=1234, dport=1234) /
-                 Raw('\xa5' * 100))
+                 Raw(b'\xa5' * 100))
 
         rx = self.send_and_assert_no_replies(self.pg0, p_ver * NUM_PKTS,
                                              "funky version")
@@ -1685,7 +1689,7 @@ class TestIPInput(VppTestCase):
                      dst=self.pg1.remote_ip4,
                      frag=1) /
                   UDP(sport=1234, dport=1234) /
-                  Raw('\xa5' * 100))
+                  Raw(b'\xa5' * 100))
 
         rx = self.send_and_assert_no_replies(self.pg0, p_frag * NUM_PKTS,
                                              "frag offset")
@@ -1699,7 +1703,7 @@ class TestIPInput(VppTestCase):
                     dst=self.pg1.remote_ip4,
                     ttl=1) /
                  UDP(sport=1234, dport=1234) /
-                 Raw('\xa5' * 100))
+                 Raw(b'\xa5' * 100))
 
         rx = self.send_and_expect(self.pg0, p_ttl * NUM_PKTS, self.pg0)
 
@@ -1721,7 +1725,7 @@ class TestIPInput(VppTestCase):
                     dst=self.pg1.remote_ip4,
                     ttl=10, flags='DF') /
                  UDP(sport=1234, dport=1234) /
-                 Raw('\xa5' * 2000))
+                 Raw(b'\xa5' * 2000))
 
         self.vapi.sw_interface_set_mtu(self.pg1.sw_if_index, [1500, 0, 0, 0])
 
@@ -1749,7 +1753,7 @@ class TestIPInput(VppTestCase):
                 IP(src="0.0.0.0",
                    dst=self.pg0.local_ip4) /
                 ICMP(id=4, seq=4) /
-                Raw(load='\x0a' * 18))
+                Raw(load=b'\x0a' * 18))
         rx = self.send_and_assert_no_replies(self.pg0, p_s0 * 17)
 
         p_s0 = (Ether(src=self.pg0.remote_mac,
@@ -1757,7 +1761,7 @@ class TestIPInput(VppTestCase):
                 IP(src="255.255.255.255",
                    dst=self.pg0.local_ip4) /
                 ICMP(id=4, seq=4) /
-                Raw(load='\x0a' * 18))
+                Raw(load=b'\x0a' * 18))
         rx = self.send_and_assert_no_replies(self.pg0, p_s0 * 17)
 
 
@@ -1799,13 +1803,13 @@ class TestIPDirectedBroadcast(VppTestCase):
               IP(src="1.1.1.1",
                  dst=self.pg0._local_ip4_bcast) /
               UDP(sport=1234, dport=1234) /
-              Raw('\xa5' * 2000))
+              Raw(b'\xa5' * 2000))
         p1 = (Ether(src=self.pg0.remote_mac,
                     dst=self.pg0.local_mac) /
               IP(src="1.1.1.1",
                  dst=self.pg1._local_ip4_bcast) /
               UDP(sport=1234, dport=1234) /
-              Raw('\xa5' * 2000))
+              Raw(b'\xa5' * 2000))
 
         self.pg0.config_ip4()
         self.pg0.resolve_arp()
@@ -1881,13 +1885,13 @@ class TestIPLPM(VppTestCase):
                IP(src="1.1.1.1",
                   dst="10.1.1.1") /
                UDP(sport=1234, dport=1234) /
-               Raw('\xa5' * 2000))
+               Raw(b'\xa5' * 2000))
         p_24 = (Ether(src=self.pg0.remote_mac,
                       dst=self.pg0.local_mac) /
                 IP(src="1.1.1.1",
                    dst="10.1.2.1") /
                 UDP(sport=1234, dport=1234) /
-                Raw('\xa5' * 2000))
+                Raw(b'\xa5' * 2000))
 
         self.logger.info(self.vapi.cli("sh ip fib mtrie"))
         rx = self.send_and_expect(self.pg0, p_8 * NUM_PKTS, self.pg2)
@@ -1918,11 +1922,18 @@ class TestIPv4Frag(VppTestCase):
     def test_frag_large_packets(self):
         """ Fragmentation of large packets """
 
+        self.vapi.cli("adjacency counters enable")
+
         p = (Ether(dst=self.src_if.local_mac, src=self.src_if.remote_mac) /
              IP(src=self.src_if.remote_ip4, dst=self.dst_if.remote_ip4) /
              UDP(sport=1234, dport=5678) / Raw())
         self.extend_packet(p, 6000, "abcde")
         saved_payload = p[Raw].load
+
+        nbr = VppNeighbor(self,
+                          self.dst_if.sw_if_index,
+                          self.dst_if.remote_mac,
+                          self.dst_if.remote_ip4).add_vpp_config()
 
         # Force fragmentation by setting MTU of output interface
         # lower than packet size
@@ -1937,8 +1948,11 @@ class TestIPv4Frag(VppTestCase):
         # cannot be larger then VPP buffer size (which is 2048)
         packets = self.dst_if.get_capture(3)
 
+        # we should show 3 packets thru the neighbor
+        self.assertEqual(3, nbr.get_stats()['packets'])
+
         # Assume VPP sends the fragments in order
-        payload = ''
+        payload = b''
         for p in packets:
             payload_offset = p.frag * 8
             if payload_offset > 0:
@@ -1947,6 +1961,199 @@ class TestIPv4Frag(VppTestCase):
             payload += p[Raw].load
         self.assert_equal(payload, saved_payload, "payload")
 
+
+class TestIPReplace(VppTestCase):
+    """ IPv4 Table Replace """
+
+    @classmethod
+    def setUpClass(cls):
+        super(TestIPReplace, cls).setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super(TestIPReplace, cls).tearDownClass()
+
+    def setUp(self):
+        super(TestIPReplace, self).setUp()
+
+        self.create_pg_interfaces(range(4))
+
+        table_id = 1
+        self.tables = []
+
+        for i in self.pg_interfaces:
+            i.admin_up()
+            i.config_ip4()
+            i.resolve_arp()
+            i.generate_remote_hosts(2)
+            self.tables.append(VppIpTable(self, table_id).add_vpp_config())
+            table_id += 1
+
+    def tearDown(self):
+        super(TestIPReplace, self).tearDown()
+        for i in self.pg_interfaces:
+            i.admin_down()
+            i.unconfig_ip4()
+
+    def test_replace(self):
+        """ IP Table Replace """
+
+        N_ROUTES = 20
+        links = [self.pg0, self.pg1, self.pg2, self.pg3]
+        routes = [[], [], [], []]
+
+        # load up the tables with some routes
+        for ii, t in enumerate(self.tables):
+            for jj in range(N_ROUTES):
+                uni = VppIpRoute(
+                    self, "10.0.0.%d" % jj, 32,
+                    [VppRoutePath(links[ii].remote_hosts[0].ip4,
+                                  links[ii].sw_if_index),
+                     VppRoutePath(links[ii].remote_hosts[1].ip4,
+                                  links[ii].sw_if_index)],
+                    table_id=t.table_id).add_vpp_config()
+                multi = VppIpMRoute(
+                    self, "0.0.0.0",
+                    "239.0.0.%d" % jj, 32,
+                    MRouteEntryFlags.MFIB_ENTRY_FLAG_NONE,
+                    [VppMRoutePath(self.pg0.sw_if_index,
+                                   MRouteItfFlags.MFIB_ITF_FLAG_ACCEPT),
+                     VppMRoutePath(self.pg1.sw_if_index,
+                                   MRouteItfFlags.MFIB_ITF_FLAG_FORWARD),
+                     VppMRoutePath(self.pg2.sw_if_index,
+                                   MRouteItfFlags.MFIB_ITF_FLAG_FORWARD),
+                     VppMRoutePath(self.pg3.sw_if_index,
+                                   MRouteItfFlags.MFIB_ITF_FLAG_FORWARD)],
+                    table_id=t.table_id).add_vpp_config()
+                routes[ii].append({'uni': uni,
+                                   'multi': multi})
+
+        #
+        # replace the tables a few times
+        #
+        for kk in range(3):
+            # replace_begin each table
+            for t in self.tables:
+                t.replace_begin()
+
+            # all the routes are still there
+            for ii, t in enumerate(self.tables):
+                dump = t.dump()
+                mdump = t.mdump()
+                for r in routes[ii]:
+                    self.assertTrue(find_route_in_dump(dump, r['uni'], t))
+                    self.assertTrue(find_mroute_in_dump(mdump, r['multi'], t))
+
+            # redownload the even numbered routes
+            for ii, t in enumerate(self.tables):
+                for jj in range(0, N_ROUTES, 2):
+                    routes[ii][jj]['uni'].add_vpp_config()
+                    routes[ii][jj]['multi'].add_vpp_config()
+
+            # signal each table replace_end
+            for t in self.tables:
+                t.replace_end()
+
+            # we should find the even routes, but not the odd
+            for ii, t in enumerate(self.tables):
+                dump = t.dump()
+                mdump = t.mdump()
+                for jj in range(0, N_ROUTES, 2):
+                    self.assertTrue(find_route_in_dump(
+                        dump, routes[ii][jj]['uni'], t))
+                    self.assertTrue(find_mroute_in_dump(
+                        mdump, routes[ii][jj]['multi'], t))
+                for jj in range(1, N_ROUTES - 1, 2):
+                    self.assertFalse(find_route_in_dump(
+                        dump, routes[ii][jj]['uni'], t))
+                    self.assertFalse(find_mroute_in_dump(
+                        mdump, routes[ii][jj]['multi'], t))
+
+            # reload all the routes
+            for ii, t in enumerate(self.tables):
+                for r in routes[ii]:
+                    r['uni'].add_vpp_config()
+                    r['multi'].add_vpp_config()
+
+            # all the routes are still there
+            for ii, t in enumerate(self.tables):
+                dump = t.dump()
+                mdump = t.mdump()
+                for r in routes[ii]:
+                    self.assertTrue(find_route_in_dump(dump, r['uni'], t))
+                    self.assertTrue(find_mroute_in_dump(mdump, r['multi'], t))
+
+        #
+        # finally flush the tables for good measure
+        #
+        for t in self.tables:
+            t.flush()
+            self.assertEqual(len(t.dump()), 5)
+            self.assertEqual(len(t.mdump()), 1)
+
+
+class TestIPCover(VppTestCase):
+    """ IPv4 Table Cover """
+
+    @classmethod
+    def setUpClass(cls):
+        super(TestIPCover, cls).setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super(TestIPCover, cls).tearDownClass()
+
+    def setUp(self):
+        super(TestIPCover, self).setUp()
+
+        self.create_pg_interfaces(range(4))
+
+        table_id = 1
+        self.tables = []
+
+        for i in self.pg_interfaces:
+            i.admin_up()
+            i.config_ip4()
+            i.resolve_arp()
+            i.generate_remote_hosts(2)
+            self.tables.append(VppIpTable(self, table_id).add_vpp_config())
+            table_id += 1
+
+    def tearDown(self):
+        super(TestIPCover, self).tearDown()
+        for i in self.pg_interfaces:
+            i.admin_down()
+            i.unconfig_ip4()
+
+    def test_cover(self):
+        """ IP Table Cover """
+
+        # add a loop back with a /32 prefix
+        lo = VppLoInterface(self)
+        lo.admin_up()
+        a = VppIpInterfaceAddress(self, lo, "127.0.0.1", 32).add_vpp_config()
+
+        # add a neighbour that matches the loopback's /32
+        nbr = VppNeighbor(self,
+                          lo.sw_if_index,
+                          lo.remote_mac,
+                          "127.0.0.1").add_vpp_config()
+
+        # add the default route which will be the cover for /32
+        r = VppIpRoute(self, "0.0.0.0", 0,
+                       [VppRoutePath("127.0.0.1",
+                                     lo.sw_if_index)],
+                       register=False).add_vpp_config()
+
+        # add/remove/add a longer mask cover
+        r = VppIpRoute(self, "127.0.0.0", 8,
+                       [VppRoutePath("127.0.0.1",
+                                     lo.sw_if_index)]).add_vpp_config()
+        r.remove_vpp_config()
+        r.add_vpp_config()
+
+        # remove the default route
+        r.remove_vpp_config()
 
 if __name__ == '__main__':
     unittest.main(testRunner=VppTestRunner)

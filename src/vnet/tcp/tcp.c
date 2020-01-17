@@ -23,9 +23,8 @@
 #include <vnet/fib/fib.h>
 #include <vnet/dpo/load_balance.h>
 #include <vnet/dpo/receive_dpo.h>
-#include <vnet/ip/ip6_neighbor.h>
+#include <vnet/ip-neighbor/ip_neighbor.h>
 #include <math.h>
-#include <vnet/ethernet/arp.h>
 
 tcp_main_t tcp_main;
 
@@ -271,7 +270,7 @@ tcp_connection_cleanup (tcp_connection_t * tc)
       vec_free (tc->rcv_opts.sacks);
       pool_free (tc->sack_sb.holes);
 
-      if (tc->flags & TCP_CONN_RATE_SAMPLE)
+      if (tc->cfg_flags & TCP_CFG_F_RATE_SAMPLE)
 	tcp_bt_cleanup (tc);
 
       /* Poison the entry */
@@ -360,6 +359,7 @@ tcp_connection_reset (tcp_connection_t * tc)
        * cleanly close the connection */
       tcp_timer_set (tc, TCP_TIMER_WAITCLOSE, tcp_cfg.closewait_time);
       session_transport_reset_notify (&tc->connection);
+      tcp_cong_recovery_off (tc);
       tcp_connection_set_state (tc, TCP_STATE_CLOSED);
       session_transport_closed_notify (&tc->connection);
       break;
@@ -370,6 +370,7 @@ tcp_connection_reset (tcp_connection_t * tc)
     case TCP_STATE_LAST_ACK:
       tcp_connection_timers_reset (tc);
       tcp_timer_set (tc, TCP_TIMER_WAITCLOSE, tcp_cfg.closewait_time);
+      tcp_cong_recovery_off (tc);
       /* Make sure we mark the session as closed. In some states we may
        * be still trying to send data */
       tcp_connection_set_state (tc, TCP_STATE_CLOSED);
@@ -489,6 +490,7 @@ tcp_session_reset (u32 conn_index, u32 thread_index)
   session_transport_closed_notify (&tc->connection);
   tcp_send_reset (tc);
   tcp_connection_timers_reset (tc);
+  tcp_cong_recovery_off (tc);
   tcp_connection_set_state (tc, TCP_STATE_CLOSED);
   tcp_timer_update (tc, TCP_TIMER_WAITCLOSE, tcp_cfg.cleanup_time);
 }
@@ -702,6 +704,9 @@ tcp_init_snd_vars (tcp_connection_t * tc)
   tc->snd_nxt = tc->iss + 1;
   tc->snd_una_max = tc->snd_nxt;
   tc->srtt = 100;		/* 100 ms */
+
+  if (!tcp_cfg.csum_offload)
+    tc->cfg_flags |= TCP_CFG_F_NO_CSUM_OFFLOAD;
 }
 
 void
@@ -737,8 +742,11 @@ tcp_connection_init_vars (tcp_connection_t * tc)
       || tcp_cfg.enable_tx_pacing)
     tcp_enable_pacing (tc);
 
-  if (tc->flags & TCP_CONN_RATE_SAMPLE)
+  if (tc->cfg_flags & TCP_CFG_F_RATE_SAMPLE)
     tcp_bt_init (tc);
+
+  if (!tcp_cfg.allow_tso)
+    tc->cfg_flags |= TCP_CFG_F_NO_TSO;
 
   tc->start_ts = tcp_time_now_us (tc->c_thread_index);
 }
@@ -839,6 +847,31 @@ format_tcp_state (u8 * s, va_list * args)
   return s;
 }
 
+const char *tcp_cfg_flags_str[] = {
+#define _(sym, str) str,
+  foreach_tcp_cfg_flag
+#undef _
+};
+
+static u8 *
+format_tcp_cfg_flags (u8 * s, va_list * args)
+{
+  tcp_connection_t *tc = va_arg (*args, tcp_connection_t *);
+  int i, last = -1;
+
+  for (i = 0; i < TCP_CFG_N_FLAG_BITS; i++)
+    if (tc->cfg_flags & (1 << i))
+      last = i;
+  for (i = 0; i < last; i++)
+    {
+      if (tc->cfg_flags & (1 << i))
+	s = format (s, "%s, ", tcp_cfg_flags_str[i]);
+    }
+  if (last >= 0)
+    s = format (s, "%s", tcp_cfg_flags_str[last]);
+  return s;
+}
+
 const char *tcp_connection_flags_str[] = {
 #define _(sym, str) str,
   foreach_tcp_connection_flag
@@ -915,17 +948,26 @@ static u8 *
 format_tcp_congestion (u8 * s, va_list * args)
 {
   tcp_connection_t *tc = va_arg (*args, tcp_connection_t *);
-  u32 indent = format_get_indent (s);
+  u32 indent = format_get_indent (s), prr_space = 0;
 
   s = format (s, "%U ", format_tcp_congestion_status, tc);
   s = format (s, "algo %s cwnd %u ssthresh %u bytes_acked %u\n",
 	      tc->cc_algo->name, tc->cwnd, tc->ssthresh, tc->bytes_acked);
-  s = format (s, "%Ucc space %u prev_cwnd %u prev_ssthresh %u rxt_bytes %u\n",
+  s = format (s, "%Ucc space %u prev_cwnd %u prev_ssthresh %u\n",
 	      format_white_space, indent, tcp_available_cc_snd_space (tc),
-	      tc->prev_cwnd, tc->prev_ssthresh, tc->snd_rxt_bytes);
-  s = format (s, "%Usnd_congestion %u dupack %u limited_transmit %u\n",
+	      tc->prev_cwnd, tc->prev_ssthresh);
+  s = format (s, "%Usnd_cong %u dupack %u limited_tx %u\n",
 	      format_white_space, indent, tc->snd_congestion - tc->iss,
 	      tc->rcv_dupacks, tc->limited_transmit - tc->iss);
+  s = format (s, "%Urxt_bytes %u rxt_delivered %u rxt_head %u rxt_ts %u\n",
+	      format_white_space, indent, tc->snd_rxt_bytes,
+	      tc->rxt_delivered, tc->rxt_head - tc->iss,
+	      tcp_time_now_w_thread (tc->c_thread_index) - tc->snd_rxt_ts);
+  if (tcp_in_fastrecovery (tc))
+    prr_space = tcp_fastrecovery_prr_snd_space (tc);
+  s = format (s, "%Uprr_start %u prr_delivered %u prr space %u\n",
+	      format_white_space, indent, tc->prr_start - tc->iss,
+	      tc->prr_delivered, prr_space);
   return s;
 }
 
@@ -954,8 +996,9 @@ static u8 *
 format_tcp_vars (u8 * s, va_list * args)
 {
   tcp_connection_t *tc = va_arg (*args, tcp_connection_t *);
-  s = format (s, " index: %u flags: %U timers: %U\n", tc->c_c_index,
-	      format_tcp_connection_flags, tc, format_tcp_timers, tc);
+  s = format (s, " index: %u cfg: %U flags: %U timers: %U\n", tc->c_c_index,
+	      format_tcp_cfg_flags, tc, format_tcp_connection_flags, tc,
+	      format_tcp_timers, tc);
   s = format (s, " snd_una %u snd_nxt %u snd_una_max %u",
 	      tc->snd_una - tc->iss, tc->snd_nxt - tc->iss,
 	      tc->snd_una_max - tc->iss);
@@ -977,6 +1020,8 @@ format_tcp_vars (u8 * s, va_list * args)
 	      tc->rto, tc->rto_boff, tc->srtt, tc->mrtt_us * 1000, tc->rttvar,
 	      tc->rtt_ts);
   s = format (s, " rtt_seq %u\n", tc->rtt_seq - tc->iss);
+  s = format (s, " next_node %u opaque 0x%x\n", tc->next_node_index,
+	      tc->next_node_opaque);
   s = format (s, " cong:   %U", format_tcp_congestion, tc);
 
   if (tc->state >= TCP_STATE_ESTABLISHED)
@@ -1140,10 +1185,11 @@ format_tcp_scoreboard (u8 * s, va_list * args)
   sack_scoreboard_hole_t *hole;
   u32 indent = format_get_indent (s);
 
-  s = format (s, "sacked %u last_sacked %u lost %u last_lost %u\n",
+  s = format (s, "sacked %u last_sacked %u lost %u last_lost %u"
+	      " rxt_sacked %u\n",
 	      sb->sacked_bytes, sb->last_sacked_bytes, sb->lost_bytes,
-	      sb->last_lost_bytes);
-  s = format (s, "%Ulast_bytes_delivered %u high_sacked %u is_reneging %u\n",
+	      sb->last_lost_bytes, sb->rxt_sacked);
+  s = format (s, "%Ulast_delivered %u high_sacked %u is_reneging %u\n",
 	      format_white_space, indent, sb->last_bytes_delivered,
 	      sb->high_sacked - tc->iss, sb->is_reneging);
   s = format (s, "%Ucur_rxt_hole %u high_rxt %u rescue_rxt %u",
@@ -1189,7 +1235,7 @@ tcp_session_cal_goal_size (tcp_connection_t * tc)
   goal_size = TCP_MAX_GSO_SZ - tc->snd_mss % TCP_MAX_GSO_SZ;
   goal_size = clib_min (goal_size, tc->snd_wnd / 2);
 
-  return goal_size;
+  return goal_size > tc->snd_mss ? goal_size : tc->snd_mss;
 }
 
 /**
@@ -1209,10 +1255,8 @@ tcp_session_send_mss (transport_connection_t * trans_conn)
    * the current state of the connection. */
   tcp_update_burst_snd_vars (tc);
 
-  if (PREDICT_FALSE (tc->is_tso))
-    {
-      return tcp_session_cal_goal_size (tc);
-    }
+  if (PREDICT_FALSE (tc->cfg_flags & TCP_CFG_F_TSO))
+    return tcp_session_cal_goal_size (tc);
 
   return tc->snd_mss;
 }
@@ -1354,32 +1398,32 @@ tcp_connection_tx_pacer_update (tcp_connection_t * tc)
   if (!transport_connection_is_tx_paced (&tc->connection))
     return;
 
+  f64 srtt = clib_min ((f64) tc->srtt * TCP_TICK, tc->mrtt_us);
+
   transport_connection_tx_pacer_update (&tc->connection,
-					tcp_cc_get_pacing_rate (tc));
+					tcp_cc_get_pacing_rate (tc),
+					srtt * CLIB_US_TIME_FREQ);
 }
 
 void
 tcp_connection_tx_pacer_reset (tcp_connection_t * tc, u32 window,
 			       u32 start_bucket)
 {
-  tcp_worker_ctx_t *wrk = tcp_get_worker (tc->c_thread_index);
   f64 srtt = clib_min ((f64) tc->srtt * TCP_TICK, tc->mrtt_us);
-  u64 last_time = wrk->vm->clib_time.last_cpu_time;
-  transport_connection_tx_pacer_reset (&tc->connection, window / srtt,
-				       start_bucket, last_time);
+  transport_connection_tx_pacer_reset (&tc->connection,
+				       tcp_cc_get_pacing_rate (tc),
+				       start_bucket,
+				       srtt * CLIB_US_TIME_FREQ);
 }
 
 static void
-tcp_timer_waitclose_handler (u32 conn_index)
+tcp_timer_waitclose_handler (u32 conn_index, u32 thread_index)
 {
-  u32 thread_index = vlib_get_thread_index ();
   tcp_connection_t *tc;
 
   tc = tcp_connection_get (conn_index, thread_index);
   if (!tc)
     return;
-
-  tc->timers[TCP_TIMER_WAITCLOSE] = TCP_TIMER_HANDLE_INVALID;
 
   switch (tc->state)
     {
@@ -1453,19 +1497,38 @@ static timer_expiration_handler *timer_expiration_handlers[TCP_N_TIMERS] =
 static void
 tcp_expired_timers_dispatch (u32 * expired_timers)
 {
-  int i;
+  u32 thread_index = vlib_get_thread_index ();
   u32 connection_index, timer_id;
+  tcp_connection_t *tc;
+  int i;
 
+  /*
+   * Invalidate all timer handles before dispatching. This avoids dangling
+   * index references to timer wheel pool entries that have been freed.
+   */
   for (i = 0; i < vec_len (expired_timers); i++)
     {
-      /* Get session index and timer id */
       connection_index = expired_timers[i] & 0x0FFFFFFF;
       timer_id = expired_timers[i] >> 28;
 
+      if (timer_id != TCP_TIMER_RETRANSMIT_SYN)
+	tc = tcp_connection_get (connection_index, thread_index);
+      else
+	tc = tcp_half_open_connection_get (connection_index);
+
       TCP_EVT (TCP_EVT_TIMER_POP, connection_index, timer_id);
 
-      /* Handle expiration */
-      (*timer_expiration_handlers[timer_id]) (connection_index);
+      tc->timers[timer_id] = TCP_TIMER_HANDLE_INVALID;
+    }
+
+  /*
+   * Dispatch expired timers
+   */
+  for (i = 0; i < vec_len (expired_timers); i++)
+    {
+      connection_index = expired_timers[i] & 0x0FFFFFFF;
+      timer_id = expired_timers[i] >> 28;
+      (*timer_expiration_handlers[timer_id]) (connection_index, thread_index);
     }
 }
 
@@ -1611,6 +1674,8 @@ tcp_configuration_init (void)
   tcp_cfg.default_mtu = 1500;
   tcp_cfg.initial_cwnd_multiplier = 0;
   tcp_cfg.enable_tx_pacing = 1;
+  tcp_cfg.allow_tso = 0;
+  tcp_cfg.csum_offload = 1;
   tcp_cfg.cc_algo = TCP_CC_NEWRENO;
   tcp_cfg.rwnd_min_update_ack = 1;
 
@@ -1720,10 +1785,26 @@ tcp_config_fn (vlib_main_t * vm, unformat_input_t * input)
 	;
       else if (unformat (input, "max-rx-fifo %U", unformat_memory_size,
 			 &memory_size))
-	tcp_cfg.max_rx_fifo = memory_size;
+	{
+	  if (memory_size >= 0x100000000)
+	    {
+	      return clib_error_return
+		(0, "max-rx-fifo %llu (0x%llx) too large", memory_size,
+		 memory_size);
+	    }
+	  tcp_cfg.max_rx_fifo = memory_size;
+	}
       else if (unformat (input, "min-rx-fifo %U", unformat_memory_size,
 			 &memory_size))
-	tcp_cfg.min_rx_fifo = memory_size;
+	{
+	  if (memory_size >= 0x100000000)
+	    {
+	      return clib_error_return
+		(0, "min-rx-fifo %llu (0x%llx) too large", memory_size,
+		 memory_size);
+	    }
+	  tcp_cfg.min_rx_fifo = memory_size;
+	}
       else if (unformat (input, "mtu %u", &tcp_cfg.default_mtu))
 	;
       else if (unformat (input, "rwnd-min-update-ack %d",
@@ -1734,6 +1815,10 @@ tcp_config_fn (vlib_main_t * vm, unformat_input_t * input)
 	tcp_cfg.initial_cwnd_multiplier = cwnd_multiplier;
       else if (unformat (input, "no-tx-pacing"))
 	tcp_cfg.enable_tx_pacing = 0;
+      else if (unformat (input, "tso"))
+	tcp_cfg.allow_tso = 1;
+      else if (unformat (input, "no-csum-offload"))
+	tcp_cfg.csum_offload = 0;
       else if (unformat (input, "cc-algo %U", unformat_tcp_cc_algo,
 			 &tcp_cfg.cc_algo))
 	;
@@ -1777,7 +1862,6 @@ tcp_configure_v4_source_address_range (vlib_main_t * vm,
 				       ip4_address_t * start,
 				       ip4_address_t * end, u32 table_id)
 {
-  vnet_main_t *vnm = vnet_get_main ();
   u32 start_host_byte_order, end_host_byte_order;
   fib_prefix_t prefix;
   fib_node_index_t fei;
@@ -1813,12 +1897,12 @@ tcp_configure_v4_source_address_range (vlib_main_t * vm,
   sw_if_index = fib_entry_get_resolving_interface (fei);
 
   /* Configure proxy arp across the range */
-  rv = vnet_proxy_arp_add_del (start, end, fib_index, 0 /* is_del */ );
+  rv = ip4_neighbor_proxy_add (fib_index, start, end);
 
   if (rv)
     return rv;
 
-  rv = vnet_proxy_arp_enable_disable (vnm, sw_if_index, 1);
+  rv = ip4_neighbor_proxy_enable (sw_if_index);
 
   if (rv)
     return rv;
@@ -1903,7 +1987,7 @@ tcp_configure_v6_source_address_range (vlib_main_t * vm,
 	return VNET_API_ERROR_NO_MATCHING_INTERFACE;
 
       /* Add a proxy neighbor discovery entry for this address */
-      ip6_neighbor_proxy_add_del (sw_if_index, start, 0 /* is_del */ );
+      ip6_neighbor_proxy_add (sw_if_index, start);
 
       /* Add a receive adjacency for this address */
       receive_dpo_add_or_lock (DPO_PROTO_IP6, ~0 /* sw_if_index */ ,

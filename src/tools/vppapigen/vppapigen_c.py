@@ -117,7 +117,7 @@ format_strings = {'u8': '%u',
                   'u32': '%u',
                   'i32': '%ld',
                   'u64': '%llu',
-                  'i64': '%llu',
+                  'i64': '%lld',
                   'f64': '%.2f'}
 
 noprint_fields = {'_vl_msg_id': None,
@@ -359,10 +359,10 @@ endian_strings = {
     'u16': 'clib_net_to_host_u16',
     'u32': 'clib_net_to_host_u32',
     'u64': 'clib_net_to_host_u64',
-    'i16': 'clib_net_to_host_u16',
-    'i32': 'clib_net_to_host_u32',
-    'i64': 'clib_net_to_host_u64',
-    'f64': 'clib_net_to_host_u64',
+    'i16': 'clib_net_to_host_i16',
+    'i32': 'clib_net_to_host_i32',
+    'i64': 'clib_net_to_host_i64',
+    'f64': 'clib_net_to_host_f64',
 }
 
 
@@ -458,7 +458,6 @@ static inline void vl_api_{name}_t_endian (vl_api_{name}_t *a)
             output += "/***** manual: vl_api_%s_t_endian  *****/\n\n" % t.name
             continue
 
-
         if t.__class__.__name__ == 'Using':
             output += signature.format(name=t.name)
             if ('length' in t.alias and t.alias['length'] and
@@ -512,6 +511,7 @@ def generate_include_enum(s, module, stream):
             write('   VL_API_{},\n'.format(t.name.upper()))
         write('   VL_MSG_FIRST_AVAILABLE\n')
         write('}} vl_api_{}_enum_t;\n'.format(module))
+
 
 #
 # Generate separate API _types file.
@@ -586,6 +586,10 @@ def generate_include_types(s, module, stream):
 
             write('} vl_api_%s_t;\n' % o.name)
 
+    for t in s['Define']:
+        write('#define VL_API_{ID}_CRC "{n}_{crc:08x}"\n'
+              .format(n=t.name, ID=t.name.upper(), crc=t.crc))
+
     write("\n#endif\n")
 
 
@@ -608,7 +612,7 @@ def generate_c_boilerplate(services, defines, file_crc, module, stream):
     write(hdr.format(module=module))
     write('static u16\n')
     write('setup_message_id_table (void) {\n')
-    write('   api_main_t *am = &api_main;\n')
+    write('   api_main_t *am = my_api_main;\n')
     write('   u16 msg_id_base = vl_msg_api_get_msg_ids ("{}_{crc:08x}", VL_MSG_FIRST_AVAILABLE);\n'
           .format(module, crc=file_crc))
 
@@ -654,13 +658,14 @@ def generate_c_test_plugin_boilerplate(services, defines, file_crc, module, stre
         except:
             continue
         if d.manual_print:
-            write('/* Manual definition requested for: vl_api_{n}_t_hander() */\n'
+            write('/* Manual definition requested for: vl_api_{n}_t_handler() */\n'
                   .format(n=s.reply))
             continue
         if not define_hash[s.caller].autoreply:
-            write('/* Only autoreply is supported (vl_api_{n}_t_hander()) */\n'
+            write('/* Only autoreply is supported (vl_api_{n}_t_handler()) */\n'
                   .format(n=s.reply))
             continue
+        write('#ifndef VL_API_{n}_T_HANDLER\n'.format(n=s.reply.upper()))
         write('static void\n')
         write('vl_api_{n}_t_handler (vl_api_{n}_t * mp) {{\n'.format(n=s.reply))
         write('   vat_main_t * vam = {}_test_main.vat_main;\n'.format(module))
@@ -672,6 +677,7 @@ def generate_c_test_plugin_boilerplate(services, defines, file_crc, module, stre
         write('      vam->result_ready = 1;\n')
         write('   }\n')
         write('}\n')
+        write('#endif\n')
 
         for e in s.events:
             if define_hash[e].manual_print:
@@ -716,6 +722,9 @@ def generate_c_test_plugin_boilerplate(services, defines, file_crc, module, stre
     write('   if (mainp->msg_id_base == (u16) ~0)\n')
     write('      return clib_error_return (0, "{} plugin not loaded...");\n'.format(module))
     write('   setup_message_id_table (vam, mainp->msg_id_base);\n')
+    write('#ifdef VL_API_LOCAL_SETUP_MESSAGE_ID_TABLE\n')
+    write('    VL_API_LOCAL_SETUP_MESSAGE_ID_TABLE(vam);\n')
+    write('#endif\n')
     write('   return 0;\n')
     write('}\n')
 

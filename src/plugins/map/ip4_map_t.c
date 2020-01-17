@@ -69,7 +69,8 @@ typedef struct
 } icmp_to_icmp6_ctx_t;
 
 static int
-ip4_to_ip6_set_icmp_cb (ip4_header_t * ip4, ip6_header_t * ip6, void *arg)
+ip4_to_ip6_set_icmp_cb (vlib_buffer_t * b, ip4_header_t * ip4,
+			ip6_header_t * ip6, void *arg)
 {
   icmp_to_icmp6_ctx_t *ctx = arg;
 
@@ -83,8 +84,8 @@ ip4_to_ip6_set_icmp_cb (ip4_header_t * ip4, ip6_header_t * ip6, void *arg)
 }
 
 static int
-ip4_to_ip6_set_inner_icmp_cb (ip4_header_t * ip4, ip6_header_t * ip6,
-			      void *arg)
+ip4_to_ip6_set_inner_icmp_cb (vlib_buffer_t * b, ip4_header_t * ip4,
+			      ip6_header_t * ip6, void *arg)
 {
   icmp_to_icmp6_ctx_t *ctx = arg;
 
@@ -168,7 +169,7 @@ ip4_map_t_icmp (vlib_main_t * vm,
 	  if (vnet_buffer (p0)->map_t.mtu < p0->current_length)
 	    {
 	      vnet_buffer (p0)->ip_frag.mtu = vnet_buffer (p0)->map_t.mtu;
-	      vnet_buffer (p0)->ip_frag.next_index = IP6_FRAG_NEXT_IP6_LOOKUP;
+	      vnet_buffer (p0)->ip_frag.next_index = IP_FRAG_NEXT_IP6_LOOKUP;
 	      next0 = IP4_MAPT_ICMP_NEXT_IP6_FRAG;
 	    }
 	err0:
@@ -287,7 +288,7 @@ ip4_map_t_fragmented (vlib_main_t * vm,
 		{
 		  vnet_buffer (p0)->ip_frag.mtu = vnet_buffer (p0)->map_t.mtu;
 		  vnet_buffer (p0)->ip_frag.next_index =
-		    IP6_FRAG_NEXT_IP6_LOOKUP;
+		    IP_FRAG_NEXT_IP6_LOOKUP;
 		  next0 = IP4_MAPT_FRAGMENTED_NEXT_IP6_FRAG;
 		}
 	    }
@@ -453,7 +454,7 @@ ip4_map_t_tcp_udp (vlib_main_t * vm,
 		  //Send to fragmentation node if necessary
 		  vnet_buffer (p0)->ip_frag.mtu = vnet_buffer (p0)->map_t.mtu;
 		  vnet_buffer (p0)->ip_frag.next_index =
-		    IP6_FRAG_NEXT_IP6_LOOKUP;
+		    IP_FRAG_NEXT_IP6_LOOKUP;
 		  next0 = IP4_MAPT_TCP_UDP_NEXT_IP6_FRAG;
 		}
 	    }
@@ -574,6 +575,18 @@ ip4_map_t (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * frame)
 	      goto exit;
 	    }
 
+	  bool df0 =
+	    ip40->flags_and_fragment_offset &
+	    clib_host_to_net_u16 (IP4_HEADER_FLAG_DONT_FRAGMENT);
+
+	  if (PREDICT_FALSE
+	      (df0 && !map_main.frag_ignore_df && (ip4_len0 > d0->mtu)))
+	    {
+	      p0->error = error_node->errors[MAP_ERROR_FRAGMENT_DROPPED];
+	      next0 = IP4_MAPT_NEXT_DROP;
+	      goto exit;
+	    }
+
 	  vnet_buffer (p0)->map_t.mtu = d0->mtu ? d0->mtu : ~0;
 
 	  dst_port0 = -1;
@@ -599,17 +612,6 @@ ip4_map_t (vlib_main_t * vm, vlib_node_runtime_t * node, vlib_frame_t * frame)
 	    map_get_pfx_net (d0, ip40->dst_address.as_u32, (u16) dst_port0);
 	  pheader0->daddr.as_u64[1] =
 	    map_get_sfx_net (d0, ip40->dst_address.as_u32, (u16) dst_port0);
-
-	  bool df0 =
-	    ip40->flags_and_fragment_offset &
-	    clib_host_to_net_u16 (IP4_HEADER_FLAG_DONT_FRAGMENT);
-
-	  if (PREDICT_TRUE (ip4_is_first_fragment (ip40) && df0))
-	    {
-	      p0->error = error_node->errors[MAP_ERROR_FRAGMENT_DROPPED];
-	      next0 = IP4_MAPT_NEXT_MAPT_FRAGMENTED;
-	      goto exit;
-	    }
 
 	  if (PREDICT_TRUE
 	      (error0 == MAP_ERROR_NONE && next0 != IP4_MAPT_NEXT_MAPT_ICMP))

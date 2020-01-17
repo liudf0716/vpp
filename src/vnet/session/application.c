@@ -115,7 +115,7 @@ app_listener_lookup (application_t * app, session_endpoint_cfg_t * sep_ext)
     }
 
   fib_proto = session_endpoint_fib_proto (sep);
-  table_index = application_session_table (app, fib_proto);
+  table_index = session_lookup_get_index_for_fib (fib_proto, sep->fib_index);
   handle = session_lookup_endpoint_listener (table_index, sep, 1);
   if (handle != SESSION_INVALID_HANDLE)
     {
@@ -133,10 +133,10 @@ app_listener_alloc_and_init (application_t * app,
 {
   app_listener_t *app_listener;
   transport_connection_t *tc;
+  u32 al_index, table_index;
   session_handle_t lh;
   session_type_t st;
   session_t *ls = 0;
-  u32 al_index;
   int rv;
 
   app_listener = app_listener_alloc (app);
@@ -151,7 +151,6 @@ app_listener_alloc_and_init (application_t * app,
       && session_endpoint_is_local ((session_endpoint_t *) sep))
     {
       session_type_t local_st;
-      u32 table_index;
 
       local_st = session_type_from_proto_and_ip (TRANSPORT_PROTO_NONE,
 						 sep->is_ip4);
@@ -213,7 +212,16 @@ app_listener_alloc_and_init (application_t * app,
        * connections */
       tc = session_get_transport (ls);
       if (!(tc->flags & TRANSPORT_CONNECTION_F_NO_LOOKUP))
-	session_lookup_add_connection (tc, lh);
+	{
+	  fib_protocol_t fib_proto;
+	  fib_proto = session_endpoint_fib_proto ((session_endpoint_t *) sep);
+	  table_index = session_lookup_get_index_for_fib (fib_proto,
+							  sep->fib_index);
+	  ASSERT (table_index != SESSION_TABLE_INVALID_INDEX);
+	  session_lookup_add_session_endpoint (table_index,
+					       (session_endpoint_t *) sep,
+					       lh);
+	}
     }
 
   if (!ls)
@@ -1379,9 +1387,57 @@ format_cert_key_pair (u8 * s, va_list * args)
   if (ckpair->cert_key_index == 0)
     s = format (s, "DEFAULT (cert:%d, key:%d)", cert_len, key_len);
   else
-    s =
-      format (s, "%d (cert:%d, key:%d)", ckpair->cert_key_index, cert_len,
-	      key_len);
+    s = format (s, "%d (cert:%d, key:%d)", ckpair->cert_key_index,
+		cert_len, key_len);
+  return s;
+}
+
+u8 *
+format_crypto_engine (u8 * s, va_list * args)
+{
+  u32 engine = va_arg (*args, u32);
+  switch (engine)
+    {
+    case CRYPTO_ENGINE_NONE:
+      return format (s, "none");
+    case CRYPTO_ENGINE_MBEDTLS:
+      return format (s, "mbedtls");
+    case CRYPTO_ENGINE_OPENSSL:
+      return format (s, "openssl");
+    case CRYPTO_ENGINE_PICOTLS:
+      return format (s, "picotls");
+    case CRYPTO_ENGINE_VPP:
+      return format (s, "vpp");
+    default:
+      return format (s, "unknown engine");
+    }
+  return s;
+}
+
+uword
+unformat_crypto_engine (unformat_input_t * input, va_list * args)
+{
+  u8 *a = va_arg (*args, u8 *);
+  if (unformat (input, "mbedtls"))
+    *a = CRYPTO_ENGINE_MBEDTLS;
+  else if (unformat (input, "openssl"))
+    *a = CRYPTO_ENGINE_OPENSSL;
+  else if (unformat (input, "picotls"))
+    *a = CRYPTO_ENGINE_PICOTLS;
+  else if (unformat (input, "vpp"))
+    *a = CRYPTO_ENGINE_VPP;
+  else
+    return 0;
+  return 1;
+}
+
+u8 *
+format_crypto_context (u8 * s, va_list * args)
+{
+  crypto_context_t *crctx = va_arg (*args, crypto_context_t *);
+  s = format (s, "[0x%x][sub%d,ckpair%x]", crctx->ctx_index,
+	      crctx->n_subscribers, crctx->ckpair_index);
+  s = format (s, "[%U]", format_crypto_engine, crctx->crypto_engine);
   return s;
 }
 
@@ -1484,11 +1540,48 @@ show_certificate_command_fn (vlib_main_t * vm, unformat_input_t * input,
   return 0;
 }
 
+static inline void
+appliction_format_app_mq (vlib_main_t * vm, application_t * app)
+{
+  app_worker_map_t *map;
+  app_worker_t *wrk;
+  /* *INDENT-OFF* */
+  pool_foreach (map, app->worker_maps, ({
+    wrk = app_worker_get (map->wrk_index);
+    vlib_cli_output (vm, "[A%d][%d]%U", app->app_index,
+		     map->wrk_index, format_svm_msg_q,
+		     wrk->event_queue);
+  }));
+  /* *INDENT-ON* */
+}
+
+static clib_error_t *
+appliction_format_all_app_mq (vlib_main_t * vm)
+{
+  application_t *app;
+  int i, n_threads;
+
+  n_threads = vec_len (vlib_mains);
+
+  for (i = 0; i < n_threads; i++)
+    {
+      vlib_cli_output (vm, "[Ctrl%d]%U", i, format_svm_msg_q,
+		       session_main_get_vpp_event_queue (i));
+    }
+
+  /* *INDENT-OFF* */
+  pool_foreach (app, app_main.app_pool, ({
+      appliction_format_app_mq (vm, app);
+  }));
+  /* *INDENT-ON* */
+  return 0;
+}
+
 static clib_error_t *
 show_app_command_fn (vlib_main_t * vm, unformat_input_t * input,
 		     vlib_cli_command_t * cmd)
 {
-  int do_server = 0, do_client = 0;
+  int do_server = 0, do_client = 0, do_mq = 0;
   application_t *app;
   u32 app_index = ~0;
   int verbose = 0;
@@ -1501,6 +1594,8 @@ show_app_command_fn (vlib_main_t * vm, unformat_input_t * input,
 	do_server = 1;
       else if (unformat (input, "client"))
 	do_client = 1;
+      else if (unformat (input, "mq"))
+	do_mq = 1;
       else if (unformat (input, "%u", &app_index))
 	;
       else if (unformat (input, "verbose"))
@@ -1508,6 +1603,22 @@ show_app_command_fn (vlib_main_t * vm, unformat_input_t * input,
       else
 	return clib_error_return (0, "unknown input `%U'",
 				  format_unformat_error, input);
+    }
+
+  if (do_mq && app_index != ~0)
+    {
+      app = application_get_if_valid (app_index);
+      if (!app)
+	return clib_error_return (0, "No app with index %u", app_index);
+
+      appliction_format_app_mq (vm, app);
+      return 0;
+    }
+
+  if (do_mq)
+    {
+      appliction_format_all_app_mq (vm);
+      return 0;
     }
 
   if (do_server)
@@ -1546,10 +1657,7 @@ show_app_command_fn (vlib_main_t * vm, unformat_input_t * input,
   return 0;
 }
 
-/*
- * Certificate store
- *
- */
+/* Certificate store */
 
 static app_cert_key_pair_t *
 app_cert_key_pair_alloc ()
@@ -1593,12 +1701,13 @@ vnet_app_add_cert_key_pair (vnet_app_add_cert_key_pair_args_t * a)
 }
 
 int
-vent_app_add_cert_key_interest (u32 index, u32 app_index)
+vnet_app_add_cert_key_interest (u32 index, u32 app_index)
 {
   app_cert_key_pair_t *ckpair;
   if (!(ckpair = app_cert_key_pair_get_if_valid (index)))
     return -1;
-  vec_add1 (ckpair->app_interests, app_index);
+  if (vec_search (ckpair->app_interests, app_index) != ~0)
+    vec_add1 (ckpair->app_interests, app_index);
   return 0;
 }
 
@@ -1626,23 +1735,21 @@ vnet_app_del_cert_key_pair (u32 index)
 }
 
 clib_error_t *
-cert_key_pair_store_init (vlib_main_t * vm)
+application_init (vlib_main_t * vm)
 {
   /* Add a certificate with index 0 to support legacy apis */
   (void) app_cert_key_pair_alloc ();
+  app_main.last_crypto_engine = CRYPTO_ENGINE_LAST;
   return 0;
 }
 
 /* *INDENT-OFF* */
-VLIB_INIT_FUNCTION (cert_key_pair_store_init) =
-{
-  .runs_after = VLIB_INITS("unix_physmem_init"),
-};
+VLIB_INIT_FUNCTION (application_init);
 
 VLIB_CLI_COMMAND (show_app_command, static) =
 {
   .path = "show app",
-  .short_help = "show app [server|client] [verbose]",
+  .short_help = "show app [app_id] [server|client] [mq] [verbose]",
   .function = show_app_command_fn,
 };
 
@@ -1653,6 +1760,18 @@ VLIB_CLI_COMMAND (show_certificate_command, static) =
   .function = show_certificate_command_fn,
 };
 /* *INDENT-ON* */
+
+crypto_engine_type_t
+app_crypto_engine_type_add (void)
+{
+  return (++app_main.last_crypto_engine);
+}
+
+u8
+app_crypto_engine_n_types (void)
+{
+  return (app_main.last_crypto_engine + 1);
+}
 
 /*
  * fd.io coding-style-patch-verification: ON

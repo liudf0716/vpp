@@ -117,16 +117,18 @@ icmp_match_out2in_det (snat_main_t * sm, vlib_node_runtime_t * node,
   echo0 = (icmp_echo_header_t *) (icmp0 + 1);
   sw_if_index0 = vnet_buffer (b0)->sw_if_index[VLIB_RX];
 
-  if (!icmp_is_error_message (icmp0))
+  if (!icmp_type_is_error_message
+      (vnet_buffer (b0)->ip.reass.icmp_type_or_tcp_flags))
     {
       protocol = SNAT_PROTOCOL_ICMP;
       key0.ext_host_addr = ip0->src_address;
       key0.ext_host_port = 0;
-      key0.out_port = echo0->identifier;
+      key0.out_port = vnet_buffer (b0)->ip.reass.l4_src_port;
       out_addr = ip0->dst_address;
     }
   else
     {
+      /* if error message, then it's not fragmented and we can access it */
       inner_ip0 = (ip4_header_t *) (echo0 + 1);
       l4_header = ip4_next_header (inner_ip0);
       protocol = ip_proto_to_snat_proto (inner_ip0->protocol);
@@ -191,8 +193,10 @@ icmp_match_out2in_det (snat_main_t * sm, vlib_node_runtime_t * node,
       goto out;
     }
 
-  if (PREDICT_FALSE (icmp0->type != ICMP4_echo_reply &&
-		     !icmp_is_error_message (icmp0)))
+  if (PREDICT_FALSE
+      (vnet_buffer (b0)->ip.reass.icmp_type_or_tcp_flags != ICMP4_echo_reply
+       && !icmp_type_is_error_message (vnet_buffer (b0)->ip.
+				       reass.icmp_type_or_tcp_flags)))
     {
       b0->error = node->errors[NAT_DET_OUT2IN_ERROR_BAD_ICMP_TYPE];
       next0 = NAT_DET_OUT2IN_NEXT_DROP;
@@ -343,7 +347,8 @@ VLIB_NODE_FN (snat_det_out2in_node) (vlib_main_t * vm,
 	      b0->error = node->errors[NAT_DET_OUT2IN_ERROR_NO_TRANSLATION];
 	      goto trace0;
 	    }
-	  new_port0 = ses0->in_port;
+	  old_port0 = udp0->dst_port;
+	  udp0->dst_port = new_port0 = ses0->in_port;
 
 	  old_addr0 = ip0->dst_address;
 	  ip0->dst_address = new_addr0;
@@ -364,24 +369,25 @@ VLIB_NODE_FN (snat_det_out2in_node) (vlib_main_t * vm,
 		       && ses0->state == SNAT_SESSION_TCP_LAST_ACK)
 		snat_det_ses_close (dm0, ses0);
 
-	      old_port0 = tcp0->dst;
-	      tcp0->dst = new_port0;
-
 	      sum0 = tcp0->checksum;
 	      sum0 = ip_csum_update (sum0, old_addr0.as_u32, new_addr0.as_u32,
 				     ip4_header_t,
 				     dst_address /* changed member */ );
-
 	      sum0 = ip_csum_update (sum0, old_port0, new_port0,
 				     ip4_header_t /* cheat */ ,
 				     length /* changed member */ );
 	      tcp0->checksum = ip_csum_fold (sum0);
 	    }
-	  else
+	  else if (udp0->checksum)
 	    {
-	      old_port0 = udp0->dst_port;
-	      udp0->dst_port = new_port0;
-	      udp0->checksum = 0;
+	      sum0 = udp0->checksum;
+	      sum0 = ip_csum_update (sum0, old_addr0.as_u32, new_addr0.as_u32,
+				     ip4_header_t,
+				     dst_address /* changed member */ );
+	      sum0 = ip_csum_update (sum0, old_port0, new_port0,
+				     ip4_header_t /* cheat */ ,
+				     length /* changed member */ );
+	      udp0->checksum = ip_csum_fold (sum0);
 	    }
 
 	trace0:
@@ -462,7 +468,8 @@ VLIB_NODE_FN (snat_det_out2in_node) (vlib_main_t * vm,
 	      b1->error = node->errors[NAT_DET_OUT2IN_ERROR_NO_TRANSLATION];
 	      goto trace1;
 	    }
-	  new_port1 = ses1->in_port;
+	  old_port1 = udp1->dst_port;
+	  udp1->dst_port = new_port1 = ses1->in_port;
 
 	  old_addr1 = ip1->dst_address;
 	  ip1->dst_address = new_addr1;
@@ -483,24 +490,25 @@ VLIB_NODE_FN (snat_det_out2in_node) (vlib_main_t * vm,
 		       && ses1->state == SNAT_SESSION_TCP_LAST_ACK)
 		snat_det_ses_close (dm1, ses1);
 
-	      old_port1 = tcp1->dst;
-	      tcp1->dst = new_port1;
-
 	      sum1 = tcp1->checksum;
 	      sum1 = ip_csum_update (sum1, old_addr1.as_u32, new_addr1.as_u32,
 				     ip4_header_t,
 				     dst_address /* changed member */ );
-
 	      sum1 = ip_csum_update (sum1, old_port1, new_port1,
 				     ip4_header_t /* cheat */ ,
 				     length /* changed member */ );
 	      tcp1->checksum = ip_csum_fold (sum1);
 	    }
-	  else
+	  else if (udp1->checksum)
 	    {
-	      old_port1 = udp1->dst_port;
-	      udp1->dst_port = new_port1;
-	      udp1->checksum = 0;
+	      sum1 = udp1->checksum;
+	      sum1 = ip_csum_update (sum1, old_addr1.as_u32, new_addr1.as_u32,
+				     ip4_header_t,
+				     dst_address /* changed member */ );
+	      sum1 = ip_csum_update (sum1, old_port1, new_port1,
+				     ip4_header_t /* cheat */ ,
+				     length /* changed member */ );
+	      udp1->checksum = ip_csum_fold (sum1);
 	    }
 
 	trace1:
@@ -614,7 +622,8 @@ VLIB_NODE_FN (snat_det_out2in_node) (vlib_main_t * vm,
 	      b0->error = node->errors[NAT_DET_OUT2IN_ERROR_NO_TRANSLATION];
 	      goto trace00;
 	    }
-	  new_port0 = ses0->in_port;
+	  old_port0 = udp0->dst_port;
+	  udp0->dst_port = new_port0 = ses0->in_port;
 
 	  old_addr0 = ip0->dst_address;
 	  ip0->dst_address = new_addr0;
@@ -635,24 +644,25 @@ VLIB_NODE_FN (snat_det_out2in_node) (vlib_main_t * vm,
 		       && ses0->state == SNAT_SESSION_TCP_LAST_ACK)
 		snat_det_ses_close (dm0, ses0);
 
-	      old_port0 = tcp0->dst;
-	      tcp0->dst = new_port0;
-
 	      sum0 = tcp0->checksum;
 	      sum0 = ip_csum_update (sum0, old_addr0.as_u32, new_addr0.as_u32,
 				     ip4_header_t,
 				     dst_address /* changed member */ );
-
 	      sum0 = ip_csum_update (sum0, old_port0, new_port0,
 				     ip4_header_t /* cheat */ ,
 				     length /* changed member */ );
 	      tcp0->checksum = ip_csum_fold (sum0);
 	    }
-	  else
+	  else if (udp0->checksum)
 	    {
-	      old_port0 = udp0->dst_port;
-	      udp0->dst_port = new_port0;
-	      udp0->checksum = 0;
+	      sum0 = udp0->checksum;
+	      sum0 = ip_csum_update (sum0, old_addr0.as_u32, new_addr0.as_u32,
+				     ip4_header_t,
+				     dst_address /* changed member */ );
+	      sum0 = ip_csum_update (sum0, old_port0, new_port0,
+				     ip4_header_t /* cheat */ ,
+				     length /* changed member */ );
+	      udp0->checksum = ip_csum_fold (sum0);
 	    }
 
 	trace00:

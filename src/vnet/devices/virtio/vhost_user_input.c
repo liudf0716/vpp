@@ -426,7 +426,7 @@ vhost_user_if_input (vlib_main_t * vm,
 
   /*
    * For small packets (<2kB), we will not need more than one vlib buffer
-   * per packet. In case packets are bigger, we will just yeld at some point
+   * per packet. In case packets are bigger, we will just yield at some point
    * in the loop and come back later. This is not an issue as for big packet,
    * processing cost really comes from the memory copy.
    * The assumption is that big packets will fit in 40 buffers.
@@ -654,6 +654,7 @@ vhost_user_if_input (vlib_main_t * vm,
 	    }
 
 	  /* Prepare a copy order executed later for the data */
+	  ASSERT (copy_len < VHOST_USER_COPY_ARRAY_N);
 	  vhost_copy_t *cpy = &cpu->copy[copy_len];
 	  copy_len++;
 	  u32 desc_data_l = desc_table[desc_current].len - desc_data_offset;

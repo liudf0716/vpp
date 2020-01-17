@@ -21,7 +21,7 @@
 #include <vnet/vnet.h>
 #include <vnet/ip/ip.h>
 #include <vnet/ethernet/ethernet.h>
-#include <vnet/ethernet/arp.h>
+//#include <vnet/ethernet/arp.h>
 #include <vlib/counter.h>
 
 #include <vppinfra/hash.h>
@@ -71,7 +71,7 @@ typedef struct
   int feature_initialized;
 
   /* arp cache copy, for "show mactime" */
-  ethernet_arp_ip4_entry_t *arp_cache_copy;
+  index_t *arp_cache_copy;
 
   /* convenience */
   vlib_main_t *vlib_main;
@@ -89,6 +89,7 @@ extern vlib_node_registration_t mactime_node;
 extern vlib_node_registration_t mactime_tx_node;
 
 void mactime_send_create_entry_message (u8 * mac_address);
+void mactime_url_init (vlib_main_t * vm);
 
 /* Periodic function events */
 #define MACTIME_EVENT1 1

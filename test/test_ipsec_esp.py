@@ -7,8 +7,10 @@ from parameterized import parameterized
 from framework import VppTestRunner
 from template_ipsec import IpsecTra46Tests, IpsecTun46Tests, TemplateIpsec, \
     IpsecTcpTests, IpsecTun4Tests, IpsecTra4Tests, config_tra_params, \
-    IPsecIPv4Params, IPsecIPv6Params, \
-    IpsecTra4, IpsecTun4, IpsecTra6, IpsecTun6
+    config_tun_params, IPsecIPv4Params, IPsecIPv6Params, \
+    IpsecTra4, IpsecTun4, IpsecTra6, IpsecTun6, \
+    IpsecTun6HandoffTests, IpsecTun4HandoffTests, \
+    IpsecTra6ExtTests, IpsecTunEsp4Tests
 from vpp_ipsec import VppIpsecSpd, VppIpsecSpdEntry, VppIpsecSA,\
     VppIpsecSpdItfBinding
 from vpp_ip_route import VppIpRoute, VppRoutePath
@@ -71,6 +73,7 @@ class ConfigIpsecESP(TemplateIpsec):
             config_tra_params(p, self.encryption_type)
         for p in params:
             self.config_esp_tun(p)
+            config_tun_params(p, self.encryption_type, self.tun_if)
 
         for p in params:
             d = DpoProto.DPO_PROTO_IP6 if p.is_ipv6 else DpoProto.DPO_PROTO_IP4
@@ -284,13 +287,22 @@ class TemplateIpsecEsp(ConfigIpsecESP):
         super(TemplateIpsecEsp, self).tearDown()
 
 
-class TestIpsecEsp1(TemplateIpsecEsp, IpsecTra46Tests, IpsecTun46Tests):
+class TestIpsecEsp1(TemplateIpsecEsp, IpsecTra46Tests,
+                    IpsecTun46Tests, IpsecTunEsp4Tests,
+                    IpsecTra6ExtTests):
     """ Ipsec ESP - TUN & TRA tests """
     pass
 
 
 class TestIpsecEsp2(TemplateIpsecEsp, IpsecTcpTests):
     """ Ipsec ESP - TCP tests """
+    pass
+
+
+class TestIpsecEspHandoff(TemplateIpsecEsp,
+                          IpsecTun6HandoffTests,
+                          IpsecTun4HandoffTests):
+    """ Ipsec ESP - handoff tests """
     pass
 
 
@@ -367,7 +379,7 @@ class MyParameters():
                                 IPSEC_API_INTEG_ALG_NONE),
                   'scapy-crypto': "AES-GCM",
                   'scapy-integ': "NULL",
-                  'key': "JPjyOWBeVEQiMe7h",
+                  'key': b"JPjyOWBeVEQiMe7h",
                   'salt': 0},
             'AES-GCM-192/NONE': {
                   'vpp-crypto': (VppEnum.vl_api_ipsec_crypto_alg_t.
@@ -376,7 +388,7 @@ class MyParameters():
                                 IPSEC_API_INTEG_ALG_NONE),
                   'scapy-crypto': "AES-GCM",
                   'scapy-integ': "NULL",
-                  'key': "JPjyOWBeVEQiMe7h01234567",
+                  'key': b"JPjyOWBeVEQiMe7h01234567",
                   'salt': 1010},
             'AES-GCM-256/NONE': {
                   'vpp-crypto': (VppEnum.vl_api_ipsec_crypto_alg_t.
@@ -385,7 +397,7 @@ class MyParameters():
                                 IPSEC_API_INTEG_ALG_NONE),
                   'scapy-crypto': "AES-GCM",
                   'scapy-integ': "NULL",
-                  'key': "JPjyOWBeVEQiMe7h0123456787654321",
+                  'key': b"JPjyOWBeVEQiMe7h0123456787654321",
                   'salt': 2020},
             'AES-CBC-128/MD5-96': {
                   'vpp-crypto': (VppEnum.vl_api_ipsec_crypto_alg_t.
@@ -395,7 +407,7 @@ class MyParameters():
                   'scapy-crypto': "AES-CBC",
                   'scapy-integ': "HMAC-MD5-96",
                   'salt': 0,
-                  'key': "JPjyOWBeVEQiMe7h"},
+                  'key': b"JPjyOWBeVEQiMe7h"},
             'AES-CBC-192/SHA1-96': {
                   'vpp-crypto': (VppEnum.vl_api_ipsec_crypto_alg_t.
                                  IPSEC_API_CRYPTO_ALG_AES_CBC_192),
@@ -404,7 +416,7 @@ class MyParameters():
                   'scapy-crypto': "AES-CBC",
                   'scapy-integ': "HMAC-SHA1-96",
                   'salt': 0,
-                  'key': "JPjyOWBeVEQiMe7hJPjyOWBe"},
+                  'key': b"JPjyOWBeVEQiMe7hJPjyOWBe"},
             'AES-CBC-256/SHA1-96': {
                   'vpp-crypto': (VppEnum.vl_api_ipsec_crypto_alg_t.
                                  IPSEC_API_CRYPTO_ALG_AES_CBC_256),
@@ -413,7 +425,7 @@ class MyParameters():
                   'scapy-crypto': "AES-CBC",
                   'scapy-integ': "HMAC-SHA1-96",
                   'salt': 0,
-                  'key': "JPjyOWBeVEQiMe7hJPjyOWBeVEQiMe7h"},
+                  'key': b"JPjyOWBeVEQiMe7hJPjyOWBeVEQiMe7h"},
             '3DES-CBC/SHA1-96': {
                   'vpp-crypto': (VppEnum.vl_api_ipsec_crypto_alg_t.
                                  IPSEC_API_CRYPTO_ALG_3DES_CBC),
@@ -422,7 +434,7 @@ class MyParameters():
                   'scapy-crypto': "3DES",
                   'scapy-integ': "HMAC-SHA1-96",
                   'salt': 0,
-                  'key': "JPjyOWBeVEQiMe7h00112233"},
+                  'key': b"JPjyOWBeVEQiMe7h00112233"},
             'NONE/SHA1-96': {
                   'vpp-crypto': (VppEnum.vl_api_ipsec_crypto_alg_t.
                                  IPSEC_API_CRYPTO_ALG_NONE),
@@ -431,7 +443,7 @@ class MyParameters():
                   'scapy-crypto': "NULL",
                   'scapy-integ': "HMAC-SHA1-96",
                   'salt': 0,
-                  'key': "JPjyOWBeVEQiMe7h00112233"}}
+                  'key': b"JPjyOWBeVEQiMe7h00112233"}}
 
 
 class RunTestIpsecEspAll(ConfigIpsecESP,

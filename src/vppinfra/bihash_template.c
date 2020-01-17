@@ -32,7 +32,7 @@ static inline void *BV (alloc_aligned) (BVT (clib_bihash) * h, uword nbytes)
   return (void *) (uword) (rv + alloc_arena (h));
 }
 
-void BV (clib_bihash_instantiate) (BVT (clib_bihash) * h)
+static void BV (clib_bihash_instantiate) (BVT (clib_bihash) * h)
 {
   uword bucket_size;
 
@@ -185,6 +185,7 @@ void BV (clib_bihash_master_init_svm)
   h->freelists = (void *) (freelist_vh->vector_data);
 
   h->fmt_fn = NULL;
+  h->instantiated = 1;
 }
 
 void BV (clib_bihash_slave_init_svm)
@@ -269,7 +270,7 @@ never_initialized:
 	}
     }
   clib_warning ("Couldn't find hash table %llx on clib_all_bihashes...",
-		(u64) h);
+		(u64) (uword) h);
 }
 
 static
@@ -906,12 +907,12 @@ u8 *BV (format_bihash) (u8 * s, va_list * args)
 }
 
 void BV (clib_bihash_foreach_key_value_pair)
-  (BVT (clib_bihash) * h, void *callback, void *arg)
+  (BVT (clib_bihash) * h,
+   BV (clib_bihash_foreach_key_value_pair_cb) cb, void *arg)
 {
   int i, j, k;
   BVT (clib_bihash_bucket) * b;
   BVT (clib_bihash_value) * v;
-  void (*fp) (BVT (clib_bihash_kv) *, void *) = callback;
 
   if (PREDICT_FALSE (alloc_arena (h) == 0))
     return;
@@ -930,7 +931,8 @@ void BV (clib_bihash_foreach_key_value_pair)
 	      if (BV (clib_bihash_is_free) (&v->kvp[k]))
 		continue;
 
-	      (*fp) (&v->kvp[k], arg);
+	      if (BIHASH_WALK_STOP == cb (&v->kvp[k], arg))
+		return;
 	      /*
 	       * In case the callback deletes the last entry in the bucket...
 	       */

@@ -44,6 +44,9 @@
 #include <unistd.h>
 #include <ctype.h>
 
+/** \file src/vlib/cli.c Debug CLI Implementation
+ */
+
 int vl_api_set_elog_trace_api_messages (int enable);
 int vl_api_get_elog_trace_api_messages (void);
 
@@ -207,29 +210,6 @@ unformat_vlib_cli_sub_command (unformat_input_t * i, va_list * args)
   vlib_cli_main_t *cm = &vm->cli_main;
   uword *match_bitmap, is_unique, index;
 
-  {
-    vlib_cli_sub_rule_t *sr;
-    vlib_cli_parse_rule_t *r;
-    vec_foreach (sr, c->sub_rules)
-    {
-      void **d;
-      r = vec_elt_at_index (cm->parse_rules, sr->rule_index);
-      vec_add2 (cm->parse_rule_data, d, 1);
-      vec_reset_length (d[0]);
-      if (r->data_size)
-	d[0] = _vec_resize (d[0],
-			    /* length increment */ 1,
-			    r->data_size,
-			    /* header_bytes */ 0,
-			    /* data align */ sizeof (uword));
-      if (unformat_user (i, r->unformat_function, vm, d[0]))
-	{
-	  *result = vec_elt_at_index (cm->commands, sr->command_index);
-	  return 1;
-	}
-    }
-  }
-
   match_bitmap = vlib_cli_sub_command_match (c, i);
   is_unique = clib_bitmap_count_set_bits (match_bitmap) == 1;
   index = ~0;
@@ -360,49 +340,11 @@ format_vlib_cli_command_help (u8 * s, va_list * args)
 }
 
 static u8 *
-format_vlib_cli_parse_rule_name (u8 * s, va_list * args)
-{
-  vlib_cli_parse_rule_t *r = va_arg (*args, vlib_cli_parse_rule_t *);
-  return format (s, "<%U>", format_c_identifier, r->name);
-}
-
-static u8 *
 format_vlib_cli_path (u8 * s, va_list * args)
 {
   u8 *path = va_arg (*args, u8 *);
-  int i, in_rule;
-  in_rule = 0;
-  for (i = 0; i < vec_len (path); i++)
-    {
-      switch (path[i])
-	{
-	case '%':
-	  in_rule = 1;
-	  vec_add1 (s, '<');	/* start of <RULE> */
-	  break;
 
-	case '_':
-	  /* _ -> space in rules. */
-	  vec_add1 (s, in_rule ? ' ' : '_');
-	  break;
-
-	case ' ':
-	  if (in_rule)
-	    {
-	      vec_add1 (s, '>');	/* end of <RULE> */
-	      in_rule = 0;
-	    }
-	  vec_add1 (s, ' ');
-	  break;
-
-	default:
-	  vec_add1 (s, path[i]);
-	  break;
-	}
-    }
-
-  if (in_rule)
-    vec_add1 (s, '>');		/* terminate <RULE> */
+  s = format (s, "%v", path);
 
   return s;
 }
@@ -412,13 +354,10 @@ all_subs (vlib_cli_main_t * cm, vlib_cli_command_t * subs, u32 command_index)
 {
   vlib_cli_command_t *c = vec_elt_at_index (cm->commands, command_index);
   vlib_cli_sub_command_t *sc;
-  vlib_cli_sub_rule_t *sr;
 
   if (c->function)
     vec_add1 (subs, c[0]);
 
-  vec_foreach (sr, c->sub_rules)
-    subs = all_subs (cm, subs, sr->command_index);
   vec_foreach (sc, c->sub_commands) subs = all_subs (cm, subs, sc->index);
 
   return subs;
@@ -481,17 +420,14 @@ vlib_cli_dispatch_sub_commands (vlib_main_t * vm,
 	vlib_cli_output (vm, "%U", format_vlib_cli_command_help, c,
 			 /* is_long */ 1);
 
-      else if (vec_len (c->sub_commands) + vec_len (c->sub_rules) == 0)
+      else if (vec_len (c->sub_commands) == 0)
 	vlib_cli_output (vm, "%v: no sub-commands", c->path);
 
       else
 	{
+	  vlib_cli_sub_rule_t *sr, *subs = 0;
 	  vlib_cli_sub_command_t *sc;
-	  vlib_cli_sub_rule_t *sr, *subs;
 
-	  subs = vec_dup (c->sub_rules);
-
-	  /* Add in rules if any. */
 	  vec_foreach (sc, c->sub_commands)
 	  {
 	    vec_add2 (subs, sr, 1);
@@ -505,25 +441,11 @@ vlib_cli_dispatch_sub_commands (vlib_main_t * vm,
 	  for (i = 0; i < vec_len (subs); i++)
 	    {
 	      vlib_cli_command_t *d;
-	      vlib_cli_parse_rule_t *r;
 
 	      d = vec_elt_at_index (cm->commands, subs[i].command_index);
-	      r =
-		subs[i].rule_index != ~0 ? vec_elt_at_index (cm->parse_rules,
-							     subs
-							     [i].rule_index) :
-		0;
-
-	      if (r)
-		vlib_cli_output
-		  (vm, "  %-30U %U",
-		   format_vlib_cli_parse_rule_name, r,
-		   format_vlib_cli_command_help, d, /* is_long */ 0);
-	      else
-		vlib_cli_output
-		  (vm, "  %-30v %U",
-		   subs[i].name,
-		   format_vlib_cli_command_help, d, /* is_long */ 0);
+	      vlib_cli_output
+		(vm, "  %-30v %U", subs[i].name,
+		 format_vlib_cli_command_help, d, /* is_long */ 0);
 	    }
 
 	  vec_free (subs);
@@ -636,12 +558,13 @@ vlib_cli_dispatch_sub_commands (vlib_main_t * vm,
 		    u32 c;
 		  } *ed;
 		  ed = ELOG_DATA (&vm->elog_main, e);
-		  ed->c = elog_string (&vm->elog_main, c->path);
+		  ed->c = elog_string (&vm->elog_main, "%v", c->path);
 		}
 
 	      if (!c->is_mp_safe)
 		vlib_worker_thread_barrier_sync (vm);
 
+	      c->hit_counter++;
 	      c_error = c->function (vm, si, c);
 
 	      if (!c->is_mp_safe)
@@ -661,12 +584,12 @@ vlib_cli_dispatch_sub_commands (vlib_main_t * vm,
 		    u32 c, err;
 		  } *ed;
 		  ed = ELOG_DATA (&vm->elog_main, e);
-		  ed->c = elog_string (&vm->elog_main, c->path);
+		  ed->c = elog_string (&vm->elog_main, "%v", c->path);
 		  if (c_error)
 		    {
 		      vec_add1 (c_error->what, 0);
-		      ed->err = elog_string (&vm->elog_main,
-					     (char *) c_error->what);
+		      ed->err =
+			elog_string (&vm->elog_main, (char *) c_error->what);
 		      _vec_len (c_error->what) -= 1;
 		    }
 		  else
@@ -728,7 +651,6 @@ vlib_cli_input (vlib_main_t * vm,
 		vlib_cli_output_function_t * function, uword function_arg)
 {
   vlib_process_t *cp = vlib_get_current_process (vm);
-  vlib_cli_main_t *cm = &vm->cli_main;
   clib_error_t *error;
   vlib_cli_output_function_t *save_function;
   uword save_function_arg;
@@ -742,9 +664,8 @@ vlib_cli_input (vlib_main_t * vm,
 
   do
     {
-      vec_reset_length (cm->parse_rule_data);
-      error = vlib_cli_dispatch_sub_commands (vm, &vm->cli_main, input,	/* parent */
-					      0);
+      error = vlib_cli_dispatch_sub_commands (vm, &vm->cli_main, input,
+					      /* parent */ 0);
     }
   while (!error && !unformat (input, "%U", unformat_eof));
 
@@ -1292,19 +1213,11 @@ add_sub_command (vlib_cli_main_t * cm, uword parent_index, uword child_index)
 	  return;
 	}
 
-      q = hash_get_mem (cm->parse_rule_index_by_name, sub_name);
-      if (!q)
-	{
-	  clib_error ("reference to unknown rule `%%%v' in path `%v'",
-		      sub_name, c->path);
-	  return;
-	}
-
       hash_set_mem (p->sub_rule_index_by_name, sub_name,
 		    vec_len (p->sub_rules));
       vec_add2 (p->sub_rules, sr, 1);
       sr->name = sub_name;
-      sr->rule_index = q[0];
+      sr->rule_index = sr - p->sub_rules;
       sr->command_index = child_index;
       return;
     }
@@ -1488,6 +1401,8 @@ vlib_cli_register (vlib_main_t * vm, vlib_cli_command_t * c)
   return 0;
 }
 
+#if 0
+/* $$$ turn back on again someday, maybe */
 clib_error_t *
 vlib_cli_register_parse_rule (vlib_main_t * vm, vlib_cli_parse_rule_t * r_reg)
 {
@@ -1520,8 +1435,6 @@ vlib_cli_register_parse_rule (vlib_main_t * vm, vlib_cli_parse_rule_t * r_reg)
   return error;
 }
 
-#if 0
-/* $$$ turn back on again someday, maybe */
 static clib_error_t *vlib_cli_register_parse_rules (vlib_main_t * vm,
 						    vlib_cli_parse_rule_t *
 						    lo,
@@ -1549,55 +1462,6 @@ done:
   return error;
 }
 #endif
-
-static int
-cli_path_compare (void *a1, void *a2)
-{
-  u8 **s1 = a1;
-  u8 **s2 = a2;
-
-  if ((vec_len (*s1) < vec_len (*s2)) &&
-      memcmp ((char *) *s1, (char *) *s2, vec_len (*s1)) == 0)
-    return -1;
-
-
-  if ((vec_len (*s1) > vec_len (*s2)) &&
-      memcmp ((char *) *s1, (char *) *s2, vec_len (*s2)) == 0)
-    return 1;
-
-  return vec_cmp (*s1, *s2);
-}
-
-static clib_error_t *
-show_cli_cmd_fn (vlib_main_t * vm, unformat_input_t * input,
-		 vlib_cli_command_t * cmd)
-{
-  vlib_cli_main_t *cm = &vm->cli_main;
-  vlib_cli_command_t *cli;
-  u8 **paths = 0, **s;
-
-  /* *INDENT-OFF* */
-  vec_foreach (cli, cm->commands)
-    if (vec_len (cli->path) > 0)
-      vec_add1 (paths, (u8 *) cli->path);
-
-  vec_sort_with_function (paths, cli_path_compare);
-
-  vec_foreach (s, paths)
-    vlib_cli_output (vm, "%v", *s);
-  /* *INDENT-ON* */
-
-  vec_free (paths);
-  return 0;
-}
-
-/* *INDENT-OFF* */
-VLIB_CLI_COMMAND (show_cli_command, static) = {
-  .path = "show cli",
-  .short_help = "Show cli commands",
-  .function = show_cli_cmd_fn,
-};
-/* *INDENT-ON* */
 
 static clib_error_t *
 elog_trace_command_fn (vlib_main_t * vm,
@@ -1722,6 +1586,205 @@ VLIB_CLI_COMMAND (suspend_command, static) =
   .path = "suspend",
   .short_help = "suspend debug CLI for 30ms",
   .function = suspend_command_fn,
+  .is_mp_safe = 1,
+};
+/* *INDENT-ON* */
+
+
+static int
+sort_cmds_by_path (void *a1, void *a2)
+{
+  u32 *index1 = a1;
+  u32 *index2 = a2;
+  vlib_main_t *vm = vlib_get_main ();
+  vlib_cli_main_t *cm = &vm->cli_main;
+  vlib_cli_command_t *c1, *c2;
+  int i, lmin;
+
+  c1 = vec_elt_at_index (cm->commands, *index1);
+  c2 = vec_elt_at_index (cm->commands, *index2);
+
+  lmin = vec_len (c1->path);
+  lmin = (vec_len (c2->path) >= lmin) ? lmin : vec_len (c2->path);
+
+  for (i = 0; i < lmin; i++)
+    {
+      if (c1->path[i] < c2->path[i])
+	return -1;
+      else if (c1->path[i] > c2->path[i])
+	return 1;
+    }
+
+  return 0;
+}
+
+typedef struct
+{
+  vlib_cli_main_t *cm;
+  u32 parent_command_index;
+  int show_mp_safe;
+  int show_not_mp_safe;
+  int show_hit;
+  int clear_hit;
+} vlib_cli_walk_args_t;
+
+static void
+cli_recursive_walk (vlib_cli_walk_args_t * aa)
+{
+  vlib_cli_command_t *parent;
+  vlib_cli_sub_command_t *sub;
+  vlib_cli_walk_args_t _a, *a = &_a;
+  vlib_cli_main_t *cm;
+  int i;
+
+  /* Copy args into this stack frame */
+  *a = *aa;
+  cm = a->cm;
+
+  parent = vec_elt_at_index (cm->commands, a->parent_command_index);
+
+  if (parent->function)
+    {
+      if (((a->show_mp_safe && parent->is_mp_safe)
+	   || (a->show_not_mp_safe && !parent->is_mp_safe))
+	  && (a->show_hit == 0 || parent->hit_counter))
+	{
+	  vec_add1 (cm->sort_vector, a->parent_command_index);
+	}
+
+      if (a->clear_hit)
+	parent->hit_counter = 0;
+    }
+
+  for (i = 0; i < vec_len (parent->sub_commands); i++)
+    {
+      sub = vec_elt_at_index (parent->sub_commands, i);
+      a->parent_command_index = sub->index;
+      cli_recursive_walk (a);
+    }
+}
+
+static u8 *
+format_mp_safe (u8 * s, va_list * args)
+{
+  vlib_cli_main_t *cm = va_arg (*args, vlib_cli_main_t *);
+  int show_mp_safe = va_arg (*args, int);
+  int show_not_mp_safe = va_arg (*args, int);
+  int show_hit = va_arg (*args, int);
+  int clear_hit = va_arg (*args, int);
+  vlib_cli_command_t *c;
+  vlib_cli_walk_args_t _a, *a = &_a;
+  int i;
+  char *format_string = "\n%v";
+
+  if (show_hit)
+    format_string = "\n%v: %u";
+
+  vec_reset_length (cm->sort_vector);
+
+  a->cm = cm;
+  a->parent_command_index = 0;
+  a->show_mp_safe = show_mp_safe;
+  a->show_not_mp_safe = show_not_mp_safe;
+  a->show_hit = show_hit;
+  a->clear_hit = clear_hit;
+
+  cli_recursive_walk (a);
+
+  vec_sort_with_function (cm->sort_vector, sort_cmds_by_path);
+
+  for (i = 0; i < vec_len (cm->sort_vector); i++)
+    {
+      c = vec_elt_at_index (cm->commands, cm->sort_vector[i]);
+      s = format (s, format_string, c->path, c->hit_counter);
+    }
+
+  return s;
+}
+
+
+static clib_error_t *
+show_cli_command_fn (vlib_main_t * vm,
+		     unformat_input_t * input, vlib_cli_command_t * cmd)
+{
+  int show_mp_safe = 0;
+  int show_not_mp_safe = 0;
+  int show_hit = 0;
+  int clear_hit = 0;
+
+  while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (input, "mp-safe"))
+	show_mp_safe = 1;
+      if (unformat (input, "not-mp-safe"))
+	show_not_mp_safe = 1;
+      else if (unformat (input, "hit"))
+	show_hit = 1;
+      else if (unformat (input, "clear-hit"))
+	clear_hit = 1;
+      else
+	break;
+    }
+
+  /* default set: all cli commands */
+  if (clear_hit == 0 && (show_mp_safe + show_not_mp_safe) == 0)
+    show_mp_safe = show_not_mp_safe = 1;
+
+  vlib_cli_output (vm, "%U", format_mp_safe, &vm->cli_main,
+		   show_mp_safe, show_not_mp_safe, show_hit, clear_hit);
+  if (clear_hit)
+    vlib_cli_output (vm, "hit counters cleared...");
+
+  return 0;
+}
+
+/*?
+ * Displays debug cli command information
+ *
+ * @cliexpar
+ * @cliexstart{show cli [mp-safe][not-mp-safe][hit][clear-hit]}
+ *
+ * "show cli" displays the entire debug cli:
+ *
+ * abf attach
+ * abf policy
+ * adjacency counters
+ * api trace
+ * app ns
+ * bfd key del
+ * ... and so on ...
+ *
+ * "show cli mp-safe" displays mp-safe debug CLI commands:
+ *
+ * abf policy
+ * binary-api
+ * create vhost-user
+ * exec
+ * ip container
+ * ip mroute
+ * ip probe-neighbor
+ * ip route
+ * ip scan-neighbor
+ * ip table
+ * ip6 table
+ *
+ * "show cli not-mp-safe" displays debug CLI commands
+ * which cause worker thread barrier synchronization
+ *
+ * "show cli hit" displays commands which have been executed. Qualify
+ * as desired with "mp-safe" or "not-mp-safe".
+ *
+ * "show cli clear-hit" clears the per-command hit counters.
+ * @cliexend
+?*/
+
+/* *INDENT-OFF* */
+VLIB_CLI_COMMAND (show_cli_command, static) =
+{
+  .path = "show cli",
+  .short_help = "show cli [mp-safe][not-mp-safe][hit][clear-hit]",
+  .function = show_cli_command_fn,
+  .is_mp_safe = 1,
 };
 /* *INDENT-ON* */
 

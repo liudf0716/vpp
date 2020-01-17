@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import unittest
 
@@ -44,7 +44,7 @@ class TestMactime(VppTestCase):
                 "bin mactime_enable_disable sw_if_index 1",
                 "set interface state loop0 up",
                 "clear mactime",
-                "set ip arp loop0 192.168.1.1 00:d0:2d:5e:86:85",
+                "set ip neighbor loop0 192.168.1.1 00:d0:2d:5e:86:85",
                 "bin mactime_add_del_range name sallow "
                 "mac 00:d0:2d:5e:86:85 allow-static del",
                 "bin mactime_add_del_range name sallow "
@@ -149,7 +149,12 @@ class TestMactime(VppTestCase):
                 "show error"]
 
         for cmd in cmds:
-            self.logger.info(self.vapi.cli(cmd))
+            r = self.vapi.cli_return_response(cmd)
+            if r.retval != 0:
+                if hasattr(r, 'reply'):
+                    self.logger.info(cmd + " FAIL reply " + r.reply)
+                else:
+                    self.logger.info(cmd + " FAIL retval " + str(r.retval))
 
 if __name__ == '__main__':
     unittest.main(testRunner=VppTestRunner)

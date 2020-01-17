@@ -48,7 +48,7 @@ class TestMemif(VppTestCase):
     def _check_socket_filename(self, dump, socket_id, filename):
         for d in dump:
             if (d.socket_id == socket_id) and (
-                    d.socket_filename.rstrip(b"\0") == filename):
+                    d.socket_filename == filename):
                 return True
         return False
 
@@ -59,28 +59,26 @@ class TestMemif(VppTestCase):
         dump = self.vapi.memif_socket_filename_dump()
         self.assertTrue(
             self._check_socket_filename(
-                dump, 0, b"%s/memif.sock" % six.ensure_binary(
-                    self.tempdir, encoding='utf-8')))
+                dump, 0, "%s/memif.sock" % self.tempdir))
 
         memif_sockets = []
         # existing path
         memif_sockets.append(
             VppSocketFilename(
-                self, 1, b"%s/memif1.sock" % six.ensure_binary(
-                    self.tempdir, encoding='utf-8')))
+                self, 1, "%s/memif1.sock" % self.tempdir))
         # default path (test tempdir)
         memif_sockets.append(
             VppSocketFilename(
                 self,
                 2,
-                b"memif2.sock",
+                "memif2.sock",
                 add_default_folder=True))
         # create new folder in default folder
         memif_sockets.append(
             VppSocketFilename(
                 self,
                 3,
-                b"sock/memif3.sock",
+                "sock/memif3.sock",
                 add_default_folder=True))
 
         for sock in memif_sockets:
@@ -98,8 +96,7 @@ class TestMemif(VppTestCase):
         dump = self.vapi.memif_socket_filename_dump()
         self.assertTrue(
             self._check_socket_filename(
-                dump, 0, b"%s/memif.sock" % six.ensure_binary(
-                    self.tempdir, encoding='utf-8')))
+                dump, 0, "%s/memif.sock" % self.tempdir))
 
     def _create_delete_test_one_interface(self, memif):
         memif.add_vpp_config()
@@ -161,21 +158,20 @@ class TestMemif(VppTestCase):
         # existing path
         memif_sockets.append(
             VppSocketFilename(
-                self, 1, b"%s/memif1.sock" % six.ensure_binary(
-                    self.tempdir, encoding='utf-8')))
+                self, 1, "%s/memif1.sock" % self.tempdir))
         # default path (test tempdir)
         memif_sockets.append(
             VppSocketFilename(
                 self,
                 2,
-                b"memif2.sock",
+                "memif2.sock",
                 add_default_folder=True))
         # create new folder in default folder
         memif_sockets.append(
             VppSocketFilename(
                 self,
                 3,
-                b"sock/memif3.sock",
+                "sock/memif3.sock",
                 add_default_folder=True))
 
         memif = VppMemif(
@@ -202,8 +198,7 @@ class TestMemif(VppTestCase):
             secret="abc")
 
         remote_socket = VppSocketFilename(self.remote_test, 1,
-                                          b"%s/memif.sock" % six.ensure_binary(
-                                              self.tempdir, encoding='utf-8'))
+                                          "%s/memif.sock" % self.tempdir)
         remote_socket.add_vpp_config()
 
         remote_memif = VppMemif(
@@ -226,14 +221,15 @@ class TestMemif(VppTestCase):
         pkts = []
         for i in range(num):
             pkt = (Ether(dst=pg.local_mac, src=pg.remote_mac) /
-                   IP(src=pg.remote_ip4, dst=memif.ip_prefix.address) /
+                   IP(src=pg.remote_ip4,
+                      dst=str(memif.ip_prefix.network_address)) /
                    ICMP(id=memif.if_id, type='echo-request', seq=i))
             pkts.append(pkt)
         return pkts
 
     def _verify_icmp(self, pg, memif, rx, seq):
         ip = rx[IP]
-        self.assertEqual(ip.src, memif.ip_prefix.address)
+        self.assertEqual(ip.src, str(memif.ip_prefix.network_address))
         self.assertEqual(ip.dst, pg.remote_ip4)
         self.assertEqual(ip.proto, 1)
         icmp = rx[ICMP]
@@ -250,8 +246,7 @@ class TestMemif(VppTestCase):
             VppEnum.vl_api_memif_mode_t.MEMIF_MODE_API_ETHERNET)
 
         remote_socket = VppSocketFilename(self.remote_test, 1,
-                                          b"%s/memif.sock" % six.ensure_binary(
-                                              self.tempdir, encoding='utf-8'))
+                                          "%s/memif.sock" % self.tempdir)
         remote_socket.add_vpp_config()
 
         remote_memif = VppMemif(
@@ -273,7 +268,8 @@ class TestMemif(VppTestCase):
 
         # add routing to remote vpp
         route = VppIpRoute(self.remote_test, self.pg0._local_ip4_subnet, 24,
-                           [VppRoutePath(memif.ip_prefix.address, 0xffffffff)],
+                           [VppRoutePath(memif.ip_prefix.network_address,
+                                         0xffffffff)],
                            register=False)
 
         route.add_vpp_config()

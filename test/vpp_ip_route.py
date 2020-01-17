@@ -6,7 +6,7 @@
 
 from vpp_object import VppObject
 from socket import inet_pton, inet_ntop, AF_INET, AF_INET6
-from vpp_ip import DpoProto, VppIpPrefix, INVALID_INDEX, VppIpAddressUnion, \
+from vpp_ip import DpoProto, INVALID_INDEX, VppIpAddressUnion, \
     VppIpMPrefix
 from ipaddress import ip_address, IPv4Network, IPv6Network
 
@@ -72,6 +72,13 @@ class MplsLspMode:
     UNIFORM = 1
 
 
+def mk_network(addr, len):
+    if ip_address(text_type(addr)).version == 4:
+        return IPv4Network("%s/%d" % (addr, len), strict=False)
+    else:
+        return IPv6Network("%s/%d" % (addr, len), strict=False)
+
+
 def ip_to_dpo_proto(addr):
     if addr.version == 6:
         return DpoProto.DPO_PROTO_IP6
@@ -87,18 +94,33 @@ def address_proto(ip_addr):
 
 
 def find_route(test, addr, len, table_id=0):
-    ip_addr = ip_address(text_type(addr))
+    prefix = mk_network(addr, len)
 
-    if 4 is ip_addr.version:
+    if 4 is prefix.version:
         routes = test.vapi.ip_route_dump(table_id, False)
-        prefix = IPv4Network("%s/%d" % (text_type(addr), len), strict=False)
     else:
         routes = test.vapi.ip_route_dump(table_id, True)
-        prefix = IPv6Network("%s/%d" % (text_type(addr), len), strict=False)
 
     for e in routes:
         if table_id == e.route.table_id \
-           and prefix == e.route.prefix:
+           and str(e.route.prefix) == str(prefix):
+            return True
+    return False
+
+
+def find_route_in_dump(dump, route, table):
+    for r in dump:
+        if table.table_id == r.route.table_id \
+           and route.prefix == r.route.prefix:
+            if len(route.paths) == r.route.n_paths:
+                return True
+    return False
+
+
+def find_mroute_in_dump(dump, route, table):
+    for r in dump:
+        if table.table_id == r.route.table_id \
+           and route.prefix == r.route.prefix:
             return True
     return False
 
@@ -138,22 +160,16 @@ def find_mpls_route(test, table_id, label, eos_bit, paths=None):
     return False
 
 
-def fib_interface_ip_prefix(test, address, length, sw_if_index):
-    ip_addr = ip_address(text_type(address))
+def fib_interface_ip_prefix(test, addr, len, sw_if_index):
+    # can't use python net here since we need the host bits in the prefix
+    prefix = "%s/%d" % (addr, len)
+    addrs = test.vapi.ip_address_dump(
+        sw_if_index,
+        is_ipv6=(6 == ip_address(addr).version))
 
-    if 4 is ip_addr.version:
-        addrs = test.vapi.ip_address_dump(sw_if_index)
-        prefix = IPv4Network("%s/%d" % (text_type(address), length),
-                             strict=False)
-    else:
-        addrs = test.vapi.ip_address_dump(sw_if_index, is_ipv6=1)
-        prefix = IPv6Network("%s/%d" % (text_type(address), length),
-                             strict=False)
-
-    # TODO: refactor this to VppIpPrefix.__eq__
     for a in addrs:
         if a.sw_if_index == sw_if_index and \
-           a.prefix.network == prefix:
+           str(a.prefix) == prefix:
             return True
     return False
 
@@ -169,13 +185,36 @@ class VppIpTable(VppObject):
         self.is_ip6 = is_ip6
 
     def add_vpp_config(self):
-        self._test.vapi.ip_table_add_del(is_ipv6=self.is_ip6, is_add=1,
-                                         table_id=self.table_id)
+        self._test.vapi.ip_table_add_del(is_add=1,
+                                         table={'is_ip6': self.is_ip6,
+                                                'table_id': self.table_id})
         self._test.registry.register(self, self._test.logger)
+        return self
 
     def remove_vpp_config(self):
-        self._test.vapi.ip_table_add_del(is_ipv6=self.is_ip6, is_add=0,
-                                         table_id=self.table_id)
+        self._test.vapi.ip_table_add_del(is_add=0,
+                                         table={'is_ip6': self.is_ip6,
+                                                'table_id': self.table_id})
+
+    def replace_begin(self):
+        self._test.vapi.ip_table_replace_begin(
+            table={'is_ip6': self.is_ip6,
+                   'table_id': self.table_id})
+
+    def replace_end(self):
+        self._test.vapi.ip_table_replace_end(
+            table={'is_ip6': self.is_ip6,
+                   'table_id': self.table_id})
+
+    def flush(self):
+        self._test.vapi.ip_table_flush(table={'is_ip6': self.is_ip6,
+                                              'table_id': self.table_id})
+
+    def dump(self):
+        return self._test.vapi.ip_route_dump(self.table_id, self.is_ip6)
+
+    def mdump(self):
+        return self._test.vapi.ip_mroute_dump(self.table_id, self.is_ip6)
 
     def query_vpp_config(self):
         if self.table_id == 0:
@@ -198,23 +237,26 @@ class VppIpInterfaceAddress(VppObject):
     def __init__(self, test, intf, addr, len):
         self._test = test
         self.intf = intf
-        self.prefix = VppIpPrefix(addr, len)
+        self.addr = addr
+        self.len = len
+        self.prefix = "%s/%d" % (addr, len)
 
     def add_vpp_config(self):
         self._test.vapi.sw_interface_add_del_address(
-            sw_if_index=self.intf.sw_if_index, prefix=self.prefix.encode(),
+            sw_if_index=self.intf.sw_if_index, prefix=self.prefix,
             is_add=1)
         self._test.registry.register(self, self._test.logger)
+        return self
 
     def remove_vpp_config(self):
         self._test.vapi.sw_interface_add_del_address(
-            sw_if_index=self.intf.sw_if_index, prefix=self.prefix.encode(),
+            sw_if_index=self.intf.sw_if_index, prefix=self.prefix,
             is_add=0)
 
     def query_vpp_config(self):
         return fib_interface_ip_prefix(self._test,
-                                       self.prefix.address,
-                                       self.prefix.length,
+                                       self.addr,
+                                       self.len,
                                        self.intf.sw_if_index)
 
     def object_id(self):
@@ -424,7 +466,7 @@ class VppIpRoute(VppObject):
         self._test = test
         self.paths = paths
         self.table_id = table_id
-        self.prefix = VppIpPrefix(dest_addr, dest_addr_len)
+        self.prefix = mk_network(dest_addr, dest_addr_len)
         self.register = register
         self.stats_index = None
         self.modified = False
@@ -447,7 +489,7 @@ class VppIpRoute(VppObject):
         self.modified = True
 
         self._test.vapi.ip_route_add_del(route={'table_id': self.table_id,
-                                                'prefix': self.prefix.encode(),
+                                                'prefix': self.prefix,
                                                 'n_paths': len(
                                                     self.encoded_paths),
                                                 'paths': self.encoded_paths,
@@ -458,7 +500,7 @@ class VppIpRoute(VppObject):
     def add_vpp_config(self):
         r = self._test.vapi.ip_route_add_del(
             route={'table_id': self.table_id,
-                   'prefix': self.prefix.encode(),
+                   'prefix': self.prefix,
                    'n_paths': len(self.encoded_paths),
                    'paths': self.encoded_paths,
                    },
@@ -467,6 +509,7 @@ class VppIpRoute(VppObject):
         self.stats_index = r.stats_index
         if self.register:
             self._test.registry.register(self, self._test.logger)
+        return self
 
     def remove_vpp_config(self):
         # there's no need to issue different deletes for modified routes
@@ -476,7 +519,7 @@ class VppIpRoute(VppObject):
         if self.modified:
             self._test.vapi.ip_route_add_del(
                 route={'table_id': self.table_id,
-                       'prefix': self.prefix.encode(),
+                       'prefix': self.prefix,
                        'n_paths': len(
                            self.encoded_paths),
                        'paths': self.encoded_paths},
@@ -485,23 +528,22 @@ class VppIpRoute(VppObject):
         else:
             self._test.vapi.ip_route_add_del(
                 route={'table_id': self.table_id,
-                       'prefix': self.prefix.encode(),
+                       'prefix': self.prefix,
                        'n_paths': 0},
                 is_add=0,
                 is_multipath=0)
 
     def query_vpp_config(self):
         return find_route(self._test,
-                          self.prefix.address,
-                          self.prefix.len,
+                          self.prefix.network_address,
+                          self.prefix.prefixlen,
                           self.table_id)
 
     def object_id(self):
-        return ("%s:table-%d-%s/%d" % (
-            'ip6-route' if self.prefix.addr.version == 6 else 'ip-route',
+        return ("%s:table-%d-%s" % (
+            'ip6-route' if self.prefix.version == 6 else 'ip-route',
                 self.table_id,
-                self.prefix.address,
-                self.prefix.len))
+                self.prefix))
 
     def get_stats_to(self):
         c = self._test.statistics.get_counter("/net/route/to")
@@ -540,6 +582,7 @@ class VppIpMRoute(VppObject):
                                               is_add=1)
         self.stats_index = r.stats_index
         self._test.registry.register(self, self._test.logger)
+        return self
 
     def remove_vpp_config(self):
         self._test.vapi.ip_mroute_add_del(self.table_id,
@@ -627,18 +670,18 @@ class VppMplsIpBind(VppObject):
         self.local_label = local_label
         self.table_id = table_id
         self.ip_table_id = ip_table_id
-        self.prefix = VppIpPrefix(dest_addr, dest_addr_len)
+        self.prefix = mk_network(dest_addr, dest_addr_len)
 
     def add_vpp_config(self):
         self._test.vapi.mpls_ip_bind_unbind(self.local_label,
-                                            self.prefix.encode(),
+                                            self.prefix,
                                             table_id=self.table_id,
                                             ip_table_id=self.ip_table_id)
         self._test.registry.register(self, self._test.logger)
 
     def remove_vpp_config(self):
         self._test.vapi.mpls_ip_bind_unbind(self.local_label,
-                                            self.prefix.encode(),
+                                            self.prefix,
                                             table_id=self.table_id,
                                             ip_table_id=self.ip_table_id,
                                             is_bind=0)

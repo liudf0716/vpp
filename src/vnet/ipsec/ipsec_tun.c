@@ -35,35 +35,61 @@ typedef struct ipsec_protect_db_t_
 
 static ipsec_protect_db_t ipsec_protect_db;
 
-static int
+static void
 ipsec_tun_protect_feature_set (ipsec_tun_protect_t * itp, u8 enable)
 {
-  u32 sai = itp->itp_out_sa;
-  int rv;
+  u32 sai;
 
-  const char *enc_node = (ip46_address_is_ip4 (&itp->itp_tun.src) ?
-			  "esp4-encrypt-tun" : "esp6-encrypt-tun");
+  sai = itp->itp_out_sa;
 
   if (itp->itp_flags & IPSEC_PROTECT_L2)
     {
-      rv = vnet_feature_enable_disable ("ethernet-output",
-					enc_node,
-					itp->itp_sw_if_index, enable,
-					&sai, sizeof (sai));
+      /* l2-GRE only supported by the vnet ipsec code */
+      vnet_feature_enable_disable ("ethernet-output",
+				   (ip46_address_is_ip4 (&itp->itp_tun.src) ?
+				    "esp4-encrypt-tun" :
+				    "esp6-encrypt-tun"),
+				   itp->itp_sw_if_index, enable,
+				   &sai, sizeof (sai));
     }
   else
     {
-      rv = vnet_feature_enable_disable ("ip4-output",
-					enc_node,
-					itp->itp_sw_if_index, enable,
-					&sai, sizeof (sai));
-      rv = vnet_feature_enable_disable ("ip6-output",
-					enc_node,
-					itp->itp_sw_if_index, enable,
-					&sai, sizeof (sai));
+      ipsec_main_t *im;
+      ipsec_sa_t *sa;
+      u32 fi4, fi6;
+
+      im = &ipsec_main;
+      sa = ipsec_sa_get (sai);
+
+      if (sa->crypto_alg == IPSEC_CRYPTO_ALG_NONE &&
+	  sa->integ_alg == IPSEC_INTEG_ALG_NONE)
+	{
+	  fi4 = im->esp4_no_crypto_tun_feature_index;
+	  fi6 = im->esp6_no_crypto_tun_feature_index;
+	}
+      else
+	{
+	  if (ip46_address_is_ip4 (&itp->itp_tun.src))
+	    {
+	      /* tunnel destination is v4 so we need the Xo4 indexes */
+	      fi4 = im->esp44_encrypt_tun_feature_index;
+	      fi6 = im->esp64_encrypt_tun_feature_index;
+	    }
+	  else
+	    {
+	      /* tunnel destination is v6 so we need the Xo6 indexes */
+	      fi4 = im->esp46_encrypt_tun_feature_index;
+	      fi6 = im->esp66_encrypt_tun_feature_index;
+	    }
+	}
+
+      vnet_feature_enable_disable_with_index
+	(vnet_get_feature_arc_index ("ip4-output"),
+	 fi4, itp->itp_sw_if_index, enable, &sai, sizeof (sai));
+      vnet_feature_enable_disable_with_index
+	(vnet_get_feature_arc_index ("ip6-output"),
+	 fi6, itp->itp_sw_if_index, enable, &sai, sizeof (sai));
     }
-  ASSERT (!rv);
-  return (rv);
 }
 
 static void
@@ -125,7 +151,7 @@ ipsec_tun_protect_db_remove (ipsec_main_t * im,
             .remote_ip = itp->itp_crypto.dst.ip4,
             .spi = clib_host_to_net_u32 (sa->spi),
           };
-          hash_unset (im->tun4_protect_by_key, &key);
+          hash_unset (im->tun4_protect_by_key, key.as_u64);
           if (0 == hash_elts(im->tun4_protect_by_key))
             udp_unregister_dst_port (vlib_get_main(),
                                      UDP_DST_PORT_ipsec,
@@ -148,6 +174,7 @@ ipsec_tun_protect_config (ipsec_main_t * im,
 			  ipsec_tun_protect_t * itp, u32 sa_out, u32 * sas_in)
 {
   ipsec_sa_t *sa;
+  index_t sai;
   u32 ii;
 
   itp->itp_n_sa_in = vec_len (sas_in);
@@ -155,7 +182,13 @@ ipsec_tun_protect_config (ipsec_main_t * im,
     itp->itp_in_sas[ii] = sas_in[ii];
   itp->itp_out_sa = sa_out;
 
+  ipsec_sa_lock (itp->itp_out_sa);
+
   /* *INDENT-OFF* */
+  FOR_EACH_IPSEC_PROTECT_INPUT_SAI(itp, sai,
+  ({
+    ipsec_sa_lock(sai);
+  }));
   FOR_EACH_IPSEC_PROTECT_INPUT_SA(itp, sa,
   ({
     if (ipsec_sa_is_set_IS_TUNNEL (sa))
@@ -183,7 +216,6 @@ ipsec_tun_protect_config (ipsec_main_t * im,
    * enable the encrypt feature for egress.
    */
   ipsec_tun_protect_feature_set (itp, 1);
-
 }
 
 static void
@@ -221,10 +253,116 @@ ipsec_tun_protect_find (u32 sw_if_index)
 }
 
 int
+ipsec_tun_protect_update_one (u32 sw_if_index, u32 sa_out, u32 sa_in)
+{
+  u32 *sas_in = NULL;
+  int rv;
+
+  vec_add1 (sas_in, sa_in);
+  rv = ipsec_tun_protect_update (sw_if_index, sa_out, sas_in);
+
+  return (rv);
+}
+
+int
+ipsec_tun_protect_update_out (u32 sw_if_index, u32 sa_out)
+{
+  u32 itpi, *sas_in, sai, *saip;
+  ipsec_tun_protect_t *itp;
+  ipsec_main_t *im;
+  int rv;
+
+  sas_in = NULL;
+  rv = 0;
+  im = &ipsec_main;
+  vec_validate_init_empty (ipsec_protect_db.tunnels, sw_if_index,
+			   INDEX_INVALID);
+  itpi = ipsec_protect_db.tunnels[sw_if_index];
+
+  if (INDEX_INVALID == itpi)
+    {
+      return (VNET_API_ERROR_INVALID_INTERFACE);
+    }
+
+  itp = pool_elt_at_index (ipsec_protect_pool, itpi);
+
+  /* *INDENT-0FF* */
+  FOR_EACH_IPSEC_PROTECT_INPUT_SAI (itp, sai, (
+						{
+						ipsec_sa_lock (sai);
+						vec_add1 (sas_in, sai);
+						}
+				    ));
+  /* *INDENT-ON* */
+
+  sa_out = ipsec_sa_find_and_lock (sa_out);
+
+  if (~0 == sa_out)
+    {
+      rv = VNET_API_ERROR_INVALID_VALUE;
+      goto out;
+    }
+
+  ipsec_tun_protect_unconfig (im, itp);
+  ipsec_tun_protect_config (im, itp, sa_out, sas_in);
+
+  ipsec_sa_unlock (sa_out);
+  vec_foreach (saip, sas_in) ipsec_sa_unlock (*saip);
+
+out:
+  vec_free (sas_in);
+  return (rv);
+}
+
+int
+ipsec_tun_protect_update_in (u32 sw_if_index, u32 sa_in)
+{
+  u32 itpi, *sas_in, sa_out;
+  ipsec_tun_protect_t *itp;
+  ipsec_main_t *im;
+  int rv;
+
+  sas_in = NULL;
+  rv = 0;
+  im = &ipsec_main;
+  vec_validate_init_empty (ipsec_protect_db.tunnels, sw_if_index,
+			   INDEX_INVALID);
+  itpi = ipsec_protect_db.tunnels[sw_if_index];
+
+  if (INDEX_INVALID == itpi)
+    {
+      return (VNET_API_ERROR_INVALID_INTERFACE);
+    }
+
+  sa_in = ipsec_sa_find_and_lock (sa_in);
+
+  if (~0 == sa_in)
+    {
+      rv = VNET_API_ERROR_INVALID_VALUE;
+      goto out;
+    }
+  vec_add1 (sas_in, sa_in);
+
+  itp = pool_elt_at_index (ipsec_protect_pool, itpi);
+  sa_out = itp->itp_out_sa;
+
+  ipsec_sa_lock (sa_out);
+
+  ipsec_tun_protect_unconfig (im, itp);
+  ipsec_tun_protect_config (im, itp, sa_out, sas_in);
+
+  ipsec_sa_unlock (sa_out);
+  ipsec_sa_unlock (sa_in);
+out:
+  vec_free (sas_in);
+  return (rv);
+}
+
+int
 ipsec_tun_protect_update (u32 sw_if_index, u32 sa_out, u32 * sas_in)
 {
-  u32 itpi, ii;
   ipsec_tun_protect_t *itp;
+  u32 itpi, ii, *saip;
   ipsec_main_t *im;
   int rv;
 
@@ -330,7 +468,10 @@ ipsec_tun_protect_update (u32 sw_if_index, u32 sa_out, u32 * sas_in)
       ipsec_tun_protect_config (im, itp, sa_out, sas_in);
     }
 
+  ipsec_sa_unlock (sa_out);
+  vec_foreach (saip, sas_in) ipsec_sa_unlock (*saip);
   vec_free (sas_in);
+
 out:
   return (rv);
 }
@@ -389,6 +530,12 @@ ipsec_tunnel_protect_init (vlib_main_t * vm)
 					     sizeof (ipsec6_tunnel_key_t),
 					     sizeof (u64));
   im->tun4_protect_by_key = hash_create (0, sizeof (u64));
+
+  /* set up feature nodes to drop outbound packets with no crypto alg set */
+  ipsec_add_feature ("ip4-output", "esp4-no-crypto",
+		     &im->esp4_no_crypto_tun_feature_index);
+  ipsec_add_feature ("ip6-output", "esp6-no-crypto",
+		     &im->esp6_no_crypto_tun_feature_index);
 
   return 0;
 }

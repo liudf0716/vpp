@@ -44,7 +44,6 @@
 #include <vnet/l2tp/l2tp.api.h>
 #include <vnet/span/span.api.h>
 #include <vnet/ip/ip.api.h>
-#include <vnet/ip/rd_cp.api.h>
 #include <vnet/vxlan/vxlan.api.h>
 #include <vnet/geneve/geneve.api.h>
 #include <vnet/lldp/lldp.api.h>
@@ -74,6 +73,7 @@
 #include <vnet/vxlan-gbp/vxlan_gbp.api.h>
 #include <vnet/syslog/syslog.api.h>
 #include <vnet/devices/virtio/virtio.api.h>
+#include <vnet/gso/gso.api.h>
 
 /*
  * fd.io coding-style-patch-verification: ON

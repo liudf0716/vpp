@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """ Container integration tests """
 
 import unittest
@@ -47,8 +47,7 @@ class ContainerIntegrationTestCase(VppTestCase):
         super(ContainerIntegrationTestCase, self).tearDown()
 
     def show_commands_at_teardown(self):
-        self.logger.info(self.vapi.cli("show ip arp"))
-        self.logger.info(self.vapi.cli("show ip6 neighbors"))
+        self.logger.info(self.vapi.cli("show ip neighbors"))
 
     def run_basic_conn_test(self, af, acl_side):
         """ Basic connectivity test """

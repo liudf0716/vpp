@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 from __future__ import print_function
 import binascii
 import random
@@ -18,6 +18,9 @@ from vpp_pg_interface import CaptureTimeoutError
 from util import ppp
 from ipfix import IPFIX, Set, Template, Data, IPFIXDecoder
 from vpp_ip_route import VppIpRoute, VppRoutePath
+from vpp_papi.macaddress import mac_ntop
+from socket import inet_ntop
+from vpp_papi import VppEnum
 
 
 class VppCFLOW(VppObject):
@@ -40,10 +43,20 @@ class VppCFLOW(VppObject):
 
     def add_vpp_config(self):
         self.enable_exporter()
+        l2_flag = 0
+        l3_flag = 0
+        l4_flag = 0
+        if 'l2' in self._collect.lower():
+            l2_flag = (VppEnum.vl_api_flowprobe_record_flags_t.
+                       FLOWPROBE_RECORD_FLAG_L2)
+        if 'l3' in self._collect.lower():
+            l3_flag = (VppEnum.vl_api_flowprobe_record_flags_t.
+                       FLOWPROBE_RECORD_FLAG_L3)
+        if 'l4' in self._collect.lower():
+            l4_flag = (VppEnum.vl_api_flowprobe_record_flags_t.
+                       FLOWPROBE_RECORD_FLAG_L4)
         self._test.vapi.flowprobe_params(
-            record_l2=1 if 'l2' in self._collect.lower() else 0,
-            record_l3=1 if 'l3' in self._collect.lower() else 0,
-            record_l4=1 if 'l4' in self._collect.lower() else 0,
+            record_flags=(l2_flag | l3_flag | l4_flag),
             active_timer=self._active, passive_timer=self._passive)
         self.enable_flowprobe_feature()
         self._test.vapi.cli("ipfix flush")
@@ -57,8 +70,8 @@ class VppCFLOW(VppObject):
 
     def enable_exporter(self):
         self._test.vapi.set_ipfix_exporter(
-            collector_address=self._test.pg0.remote_ip4n,
-            src_address=self._test.pg0.local_ip4n,
+            collector_address=self._test.pg0.remote_ip4,
+            src_address=self._test.pg0.local_ip4,
             path_mtu=self._mtu,
             template_interval=self._timeout)
 
@@ -415,7 +428,7 @@ class Flowprobe(MethodHolder):
                             src=self.pg7.remote_mac) /
                       IP(src=self.pg7.remote_ip4, dst="9.0.0.100") /
                       TCP(sport=1234, dport=4321, flags=80) /
-                      Raw('\xa5' * 100))]
+                      Raw(b'\xa5' * 100))]
 
         nowUTC = int(time.time())
         nowUNIX = nowUTC+2208988800
@@ -438,11 +451,9 @@ class Flowprobe(MethodHolder):
             # packets
             self.assertEqual(int(binascii.hexlify(record[2]), 16), 1)
             # src mac
-            self.assertEqual(':'.join(re.findall('..', record[56].encode(
-                'hex'))), self.pg8.local_mac)
+            self.assertEqual(mac_ntop(record[56]), self.pg8.local_mac)
             # dst mac
-            self.assertEqual(':'.join(re.findall('..', record[80].encode(
-                'hex'))), self.pg8.remote_mac)
+            self.assertEqual(mac_ntop(record[80]), self.pg8.remote_mac)
             flowTimestamp = int(binascii.hexlify(record[156]), 16) >> 32
             # flow start timestamp
             self.assertAlmostEqual(flowTimestamp, nowUNIX, delta=1)
@@ -452,15 +463,11 @@ class Flowprobe(MethodHolder):
             # ethernet type
             self.assertEqual(int(binascii.hexlify(record[256]), 16), 8)
             # src ip
-            self.assertEqual('.'.join(re.findall('..', record[8].encode(
-                                      'hex'))),
-                             '.'.join('{:02x}'.format(int(n)) for n in
-                                      self.pg7.remote_ip4.split('.')))
+            self.assertEqual(inet_ntop(socket.AF_INET, record[8]),
+                             self.pg7.remote_ip4)
             # dst ip
-            self.assertEqual('.'.join(re.findall('..', record[12].encode(
-                                      'hex'))),
-                             '.'.join('{:02x}'.format(int(n)) for n in
-                                      "9.0.0.100".split('.')))
+            self.assertEqual(inet_ntop(socket.AF_INET, record[12]),
+                             "9.0.0.100")
             # protocol (TCP)
             self.assertEqual(int(binascii.hexlify(record[4]), 16), 6)
             # src port
