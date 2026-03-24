@@ -102,7 +102,7 @@ jobs:
 
     steps:
       - name: Actions Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98  # v6.0.2
 
       - name: Restore VPP Gerrit Environment Variables
         uses: fdio/.github/.github/actions/gerrit-env-vars-restore@main

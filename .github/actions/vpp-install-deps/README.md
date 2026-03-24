@@ -80,7 +80,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout VPP Source
-        uses: actions/checkout@v5
+        uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98  # v6.0.2
 
       - name: Install VPP Dependencies
         uses: fdio/vpp/.github/actions/vpp-install-deps@master
@@ -103,7 +103,7 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v5
+        uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98  # v6.0.2
 
       - name: Install Dependencies on ${{ matrix.os }}
         uses: fdio/vpp/.github/actions/vpp-install-deps@master
@@ -136,7 +136,7 @@ jobs:
         run: apt-get install -y git
 
       - name: Checkout VPP
-        uses: actions/checkout@v5
+        uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98  # v6.0.2
 
       - name: Install VPP Dependencies
         uses: fdio/vpp/.github/actions/vpp-install-deps@master

@@ -94,7 +94,7 @@ jobs:
       image: ubuntu:22.04
     steps:
       - name: Checkout VPP Source
-        uses: actions/checkout@v4
+        uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98  # v6.0.2
 
       - name: Install Dependencies
         uses: fdio/.github/.github/actions/vpp-install-ext-deps
@@ -122,7 +122,7 @@ jobs:
       image: vpp-build:latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98  # v6.0.2
 
       - name: Setup Runtime Environment
         uses: fdio/vpp/.github/actions/vpp-docker-runtime-setup@master
