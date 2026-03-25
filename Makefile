@@ -83,7 +83,7 @@ endif
 
 ifeq ($(filter ubuntu debian linuxmint,$(OS_ID)),$(OS_ID))
 PKG=deb
-else ifeq ($(filter rhel centos fedora opensuse-leap rocky almalinux anolis,$(OS_ID)),$(OS_ID))
+else ifeq ($(filter rhel centos fedora opensuse-leap rocky almalinux anolis kylin,$(OS_ID)),$(OS_ID))
 PKG=rpm
 else ifeq ($(filter freebsd,$(OS_ID)),$(OS_ID))
 PKG=pkg
@@ -233,6 +233,16 @@ else ifeq ($(OS_ID)-$(OS_VERSION_ID),anolis-8)
 	RPM_DEPENDS += libpcap-devel llvm-toolset git-clang-format python3-pyyaml
 	RPM_DEPENDS_GROUPS = 'Development Tools'
 	export CLANG_FORMAT_VER=15
+else ifeq ($(OS_ID)-$(OS_VERSION_ID),kylin-V11)
+        RPM_DEPENDS += python3-devel python3-pip python3-ply
+	RPM_DEPENDS += cmake
+	RPM_DEPENDS += openssl-devel
+	RPM_DEPENDS += hostname tshark
+	RPM_DEPENDS += libunwind-devel binutils-devel # for stack trace
+	RPM_DEPENDS += rdma-core-devel libibverbs # for rdma
+	RPM_DEPENDS += perl-Capture-Tiny perl-DateTime # for lcov tools
+	RPM_DEPENDS += clang git-clang-format
+	RPM_DEPENDS_GROUPS = 'Development Tools'
 else
 	RPM_DEPENDS += yum-utils
 	RPM_DEPENDS += openssl-devel
@@ -463,13 +473,17 @@ else ifeq ($(OS_ID)-$(OS_VERSION_ID),anolis-8)
           $(shell dnf repolist all 2>/dev/null|grep -i powertools|cut -d' ' -f1|grep -v source)
 	@sudo -E dnf groupinstall $(CONFIRM) $(RPM_DEPENDS_GROUPS)
 	@sudo -E dnf install --skip-broken $(CONFIRM) $(RPM_DEPENDS)
+else ifeq ($(OS_ID)-$(OS_VERSION_ID),kylin-V11)
+	@sudo -E dnf install $(CONFIRM) dnf-plugins-core
+	@sudo -E dnf groupinstall $(CONFIRM) $(RPM_DEPENDS_GROUPS)
+	@sudo -E dnf install --skip-broken $(CONFIRM) $(RPM_DEPENDS)
 else ifeq ($(filter opensuse-leap-15.3 opensuse-leap-15.4 ,$(OS_ID)-$(OS_VERSION_ID)),$(OS_ID)-$(OS_VERSION_ID))
 	@sudo -E zypper refresh
 	@sudo -E zypper install  -y $(RPM_SUSE_DEPENDS)
 else ifeq ($(OS_ID), freebsd)
 	@sudo pkg install -y $(FBSD_DEPS)
 else
-	$(error "This option currently works only on Ubuntu, Debian, RHEL, CentOS, openSUSE-leap or FreeBSD systems")
+	$(error "This option currently works only on Ubuntu, Debian, RHEL, CentOS, Kylin, openSUSE-leap or FreeBSD systems")
 endif
 	git config commit.template .git_commit_template.txt
 
