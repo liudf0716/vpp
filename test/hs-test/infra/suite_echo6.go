@@ -10,10 +10,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 )
 
-var veth6Tests = map[string][]func(s *Veths6Suite){}
-var veth6SoloTests = map[string][]func(s *Veths6Suite){}
+var veth6Tests = map[string][]func(s *Echo6Suite){}
+var veth6SoloTests = map[string][]func(s *Echo6Suite){}
 
-type Veths6Suite struct {
+type Echo6Suite struct {
 	HstSuite
 	Interfaces struct {
 		Server *NetInterface
@@ -30,14 +30,14 @@ type Veths6Suite struct {
 	}
 }
 
-func RegisterVeth6Tests(tests ...func(s *Veths6Suite)) {
+func RegisterEcho6Tests(tests ...func(s *Echo6Suite)) {
 	veth6Tests[GetTestFilename()] = tests
 }
-func RegisterSoloVeth6Tests(tests ...func(s *Veths6Suite)) {
+func RegisterSoloEcho6Tests(tests ...func(s *Echo6Suite)) {
 	veth6SoloTests[GetTestFilename()] = tests
 }
 
-func (s *Veths6Suite) SetupSuite() {
+func (s *Echo6Suite) SetupSuite() {
 	time.Sleep(1 * time.Second)
 	s.HstSuite.SetupSuite()
 	s.ConfigureNetworkTopology("2peerVeth6")
@@ -51,7 +51,7 @@ func (s *Veths6Suite) SetupSuite() {
 	s.Ports.Port1 = s.GeneratePort()
 }
 
-func (s *Veths6Suite) SetupTest() {
+func (s *Echo6Suite) SetupTest() {
 	s.HstSuite.SetupTest()
 
 	// Setup test conditions
@@ -84,7 +84,7 @@ func (s *Veths6Suite) SetupTest() {
 	}
 }
 
-func (s *Veths6Suite) SetupServerVpp() {
+func (s *Echo6Suite) SetupServerVpp() {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 	AssertNil(serverVpp.Start())
 
@@ -95,7 +95,7 @@ func (s *Veths6Suite) SetupServerVpp() {
 	AssertNotEqual(0, idx)
 }
 
-func (s *Veths6Suite) SetupClientVpp() {
+func (s *Echo6Suite) SetupClientVpp() {
 	clientVpp := s.GetContainerByName("client-vpp").VppInstance
 	AssertNil(clientVpp.Start())
 
@@ -106,13 +106,13 @@ func (s *Veths6Suite) SetupClientVpp() {
 	AssertNotEqual(0, idx)
 }
 
-func (s *Veths6Suite) SetupAppContainers() {
+func (s *Echo6Suite) SetupAppContainers() {
 	s.Containers.ClientApp.Run()
 	s.Containers.ServerApp.Run()
 }
 
-var _ = Describe("Veths6Suite", Ordered, ContinueOnFailure, Label("Veth", "IPv6"), func() {
-	var s Veths6Suite
+var _ = Describe("Echo6Suite", Ordered, ContinueOnFailure, Label("Veth", "Echo", "IPv6"), func() {
+	var s Echo6Suite
 	BeforeAll(func() {
 		s.SetupSuite()
 	})
@@ -142,8 +142,8 @@ var _ = Describe("Veths6Suite", Ordered, ContinueOnFailure, Label("Veth", "IPv6"
 	}
 })
 
-var _ = Describe("Veths6SuiteSolo", Ordered, ContinueOnFailure, Serial, Label("Veth", "IPv6"), func() {
-	var s Veths6Suite
+var _ = Describe("Echo6SuiteSolo", Ordered, ContinueOnFailure, Serial, Label("Veth", "Echo", "IPv6"), func() {
+	var s Echo6Suite
 	BeforeAll(func() {
 		s.SetupSuite()
 	})

@@ -8,16 +8,16 @@ import (
 )
 
 func init() {
-	RegisterVethTests(EchoBuiltinTest, EchoBuiltinBandwidthTest, EchoBuiltinEchobytesTest, EchoBuiltinRoundtripTest,
+	RegisterEchoTests(EchoBuiltinTest, EchoBuiltinBandwidthTest, EchoBuiltinEchobytesTest, EchoBuiltinRoundtripTest,
 		EchoBuiltinTestbytesTest, EchoBuiltinPeriodicReportTest, EchoBuiltinPeriodicReportTotalTest, TlsSingleConnectionTest,
 		EchoBuiltinPeriodicReportUDPTest, EchoBuiltinUdpTest, EchoBuiltinHttpTest, EchoBuiltinHttpsTest, EchoBuiltinHttp2Test,
 		EchoBuiltinHttp3Test, EchoBuiltinHttpTestBytesTest, EchoBuiltinHttp2ConnectTcpTest, EchoBuiltinHttp3ConnectTcpTest,
 		EchoBuiltinHttp2ConnectUdpTest, EchoBuiltinHttp3ConnectUdpTest)
-	RegisterVethMWTests(TcpWithLossMWTest)
-	RegisterSoloVeth6Tests(TcpWithLoss6Test)
+	RegisterEchoMWTests(TcpWithLossMWTest)
+	RegisterSoloEcho6Tests(TcpWithLoss6Test)
 }
 
-func EchoBuiltinTest(s *VethsSuite) {
+func EchoBuiltinTest(s *EchoSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 
 	serverVpp.Vppctl("test echo server " +
@@ -32,7 +32,7 @@ func EchoBuiltinTest(s *VethsSuite) {
 	AssertNotContains(o, "failed:")
 }
 
-func EchoBuiltinUdpTest(s *VethsSuite) {
+func EchoBuiltinUdpTest(s *EchoSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 
 	serverVpp.Vppctl("test echo server " +
@@ -46,7 +46,7 @@ func EchoBuiltinUdpTest(s *VethsSuite) {
 	AssertNotContains(o, "failed:")
 }
 
-func EchoBuiltinBandwidthTest(s *VethsSuite) {
+func EchoBuiltinBandwidthTest(s *EchoSuite) {
 	regex := regexp.MustCompile(`gbytes\) in (\d+\.\d+) seconds`)
 	serverVpp := s.Containers.ServerVpp.VppInstance
 
@@ -73,7 +73,7 @@ func EchoBuiltinBandwidthTest(s *VethsSuite) {
 	}
 }
 
-func EchoBuiltinPeriodicReportTotalTest(s *VethsSuite) {
+func EchoBuiltinPeriodicReportTotalTest(s *EchoSuite) {
 	regex := regexp.MustCompile(`(\d?\.\d)\s+(\d+\.\d+)M\s+0\s+\d+\.\d+Mb/s\s+(\d?\.\d+)ms`)
 	serverVpp := s.Containers.ServerVpp.VppInstance
 
@@ -106,7 +106,7 @@ func EchoBuiltinPeriodicReportTotalTest(s *VethsSuite) {
 	}
 }
 
-func EchoBuiltinPeriodicReportUDPTest(s *VethsSuite) {
+func EchoBuiltinPeriodicReportUDPTest(s *EchoSuite) {
 	regex := regexp.MustCompile(`(\d?\.\d)-(\d?.\d)\s+(\d+\.\d+)M\s+\d?\.\d+M\s+\d+\.\d+Mb/s\s+(\d?\.\d+)ms\s+(\d+)/(\d+)`)
 	serverVpp := s.Containers.ServerVpp.VppInstance
 
@@ -147,7 +147,7 @@ func EchoBuiltinPeriodicReportUDPTest(s *VethsSuite) {
 	}
 }
 
-func EchoBuiltinPeriodicReportTest(s *VethsSuite) {
+func EchoBuiltinPeriodicReportTest(s *EchoSuite) {
 	regex := regexp.MustCompile(`(\d?\.\d)-(\d?.\d)\s+(\d+\.\d+)M\s+0\s+\d+\.\d+Mb/s\s+(\d?\.\d+)ms`)
 	serverVpp := s.Containers.ServerVpp.VppInstance
 
@@ -184,7 +184,7 @@ func EchoBuiltinPeriodicReportTest(s *VethsSuite) {
 	}
 }
 
-func EchoBuiltinRoundtripTest(s *VethsSuite) {
+func EchoBuiltinRoundtripTest(s *EchoSuite) {
 	regex := regexp.MustCompile(`(\.\d+)ms roundtrip`)
 	serverVpp := s.Containers.ServerVpp.VppInstance
 
@@ -210,7 +210,7 @@ func EchoBuiltinRoundtripTest(s *VethsSuite) {
 	}
 }
 
-func EchoBuiltinEchobytesTest(s *VethsSuite) {
+func EchoBuiltinEchobytesTest(s *EchoSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 
 	serverVpp.Vppctl("test echo server " +
@@ -225,7 +225,7 @@ func EchoBuiltinEchobytesTest(s *VethsSuite) {
 	AssertNotContains(o, "test echo clients: failed: timeout with 1 sessions")
 }
 
-func EchoBuiltinTestbytesTest(s *VethsSuite) {
+func EchoBuiltinTestbytesTest(s *EchoSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 
 	serverVpp.Vppctl("test echo server " +
@@ -263,7 +263,7 @@ func tcpEcho(port string, ip string, clientVpp *VppInstance, serverVpp *VppInsta
 	return output
 }
 
-func TcpWithLossMWTest(s *VethsSuite) {
+func TcpWithLossMWTest(s *EchoSuite) {
 	s.CpusPerVppContainer = 2
 	s.CpusPerContainer = 1
 	s.SetupTest()
@@ -271,7 +271,7 @@ func TcpWithLossMWTest(s *VethsSuite) {
 		s.Interfaces.Client, s.Interfaces.Server, s.Ports.Port1)
 }
 
-func TcpWithLoss6Test(s *Veths6Suite) {
+func TcpWithLoss6Test(s *Echo6Suite) {
 	tcpWithLossAndNoLoss(s, s.Containers.ClientVpp.VppInstance, s.Containers.ServerVpp.VppInstance,
 		s.Interfaces.Client, s.Interfaces.Server, s.Ports.Port1)
 }
@@ -318,7 +318,7 @@ func tcpWithLossAndNoLoss(s tcpWithLossInterface, clientVpp *VppInstance,
 	AssertGreaterEqualUnlessCoverageBuild(withLoss, uint64(float64(baseline)*0.15), "Tcp echo: bitrate below threshold")
 }
 
-func TlsSingleConnectionTest(s *VethsSuite) {
+func TlsSingleConnectionTest(s *EchoSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 
 	serverVpp.Vppctl("test echo server " +
@@ -345,7 +345,7 @@ func httpVerifyPeriodicStats(stats string) {
 	}
 }
 
-func EchoBuiltinHttpTestBytesTest(s *VethsSuite) {
+func EchoBuiltinHttpTestBytesTest(s *EchoSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 
 	serverVpp.Vppctl("test echo server uri https://" + s.Interfaces.Server.Ip4AddressString() + ":" + s.Ports.Port1)
@@ -359,7 +359,7 @@ func EchoBuiltinHttpTestBytesTest(s *VethsSuite) {
 	httpVerifyPeriodicStats(o)
 }
 
-func EchoBuiltinHttpTest(s *VethsSuite) {
+func EchoBuiltinHttpTest(s *EchoSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 
 	serverVpp.Vppctl("test echo server uri http://" + s.Interfaces.Server.Ip4AddressString() + ":" + s.Ports.Port1)
@@ -373,7 +373,7 @@ func EchoBuiltinHttpTest(s *VethsSuite) {
 	httpVerifyPeriodicStats(o)
 }
 
-func EchoBuiltinHttpsTest(s *VethsSuite) {
+func EchoBuiltinHttpsTest(s *EchoSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 
 	serverVpp.Vppctl("test echo server uri https://" + s.Interfaces.Server.Ip4AddressString() + ":" + s.Ports.Port1)
@@ -387,7 +387,7 @@ func EchoBuiltinHttpsTest(s *VethsSuite) {
 	httpVerifyPeriodicStats(o)
 }
 
-func EchoBuiltinHttp2Test(s *VethsSuite) {
+func EchoBuiltinHttp2Test(s *EchoSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 
 	serverVpp.Vppctl("test echo server uri https://" + s.Interfaces.Server.Ip4AddressString() + ":" + s.Ports.Port1)
@@ -401,7 +401,7 @@ func EchoBuiltinHttp2Test(s *VethsSuite) {
 	httpVerifyPeriodicStats(o)
 }
 
-func EchoBuiltinHttp3Test(s *VethsSuite) {
+func EchoBuiltinHttp3Test(s *EchoSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 
 	serverVpp.Vppctl("test echo server uri https://" + s.Interfaces.Server.Ip4AddressString() + ":" + s.Ports.Port1)
@@ -426,7 +426,7 @@ func httpTunnelVerifyPeriodicStats(stats string) {
 	}
 }
 
-func EchoBuiltinHttp2ConnectTcpTest(s *VethsSuite) {
+func EchoBuiltinHttp2ConnectTcpTest(s *EchoSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 
 	serverVpp.Vppctl("test echo server connect-tcp uri https://" + s.Interfaces.Server.Ip4AddressString() + ":" + s.Ports.Port1)
@@ -440,7 +440,7 @@ func EchoBuiltinHttp2ConnectTcpTest(s *VethsSuite) {
 	httpTunnelVerifyPeriodicStats(o)
 }
 
-func EchoBuiltinHttp3ConnectTcpTest(s *VethsSuite) {
+func EchoBuiltinHttp3ConnectTcpTest(s *EchoSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 
 	serverVpp.Vppctl("test echo server connect-tcp uri https://" + s.Interfaces.Server.Ip4AddressString() + ":" + s.Ports.Port1)
@@ -454,7 +454,7 @@ func EchoBuiltinHttp3ConnectTcpTest(s *VethsSuite) {
 	httpTunnelVerifyPeriodicStats(o)
 }
 
-func EchoBuiltinHttp2ConnectUdpTest(s *VethsSuite) {
+func EchoBuiltinHttp2ConnectUdpTest(s *EchoSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 
 	serverVpp.Vppctl("test echo server connect-udp uri https://" + s.Interfaces.Server.Ip4AddressString() + ":" + s.Ports.Port1)
@@ -468,7 +468,7 @@ func EchoBuiltinHttp2ConnectUdpTest(s *VethsSuite) {
 	httpTunnelVerifyPeriodicStats(o)
 }
 
-func EchoBuiltinHttp3ConnectUdpTest(s *VethsSuite) {
+func EchoBuiltinHttp3ConnectUdpTest(s *EchoSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 
 	serverVpp.Vppctl("test echo server connect-udp uri https://" + s.Interfaces.Server.Ip4AddressString() + ":" + s.Ports.Port1)

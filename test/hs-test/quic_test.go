@@ -11,23 +11,23 @@ import (
 )
 
 func init() {
-	RegisterVethTests(QuicAlpnMatchTest, QuicAlpnOverlapMatchTest, QuicAlpnServerPriorityMatchTest, QuicAlpnMismatchTest,
+	RegisterQuicTests(QuicAlpnMatchTest, QuicAlpnOverlapMatchTest, QuicAlpnServerPriorityMatchTest, QuicAlpnMismatchTest,
 		QuicAlpnEmptyServerListTest, QuicAlpnEmptyClientListTest, QuicBuiltinEchoTest, QuicCpsTest,
 		QuicBuiltinEchoBidirectionalTest, QuicBuiltinEchoTestBytesTest, QuicBuiltinEchoTestBytesBidirectionalTest,
 		QuicReorderTest, QuicCrlRejectThenAllowTest)
 	RegisterNoTopoTests(QuicFailedHandshakeTest)
 }
 
-func QuicCrlRejectThenAllowTest(s *VethsSuite) {
+func QuicCrlRejectThenAllowTest(s *QuicSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 	clientVpp := s.Containers.ClientVpp.VppInstance
 	serverAddress := s.Interfaces.Server.Ip4AddressString() + ":" + s.Ports.Port1
-	a := createTlsCrlTestArtifacts(s, "quic")
+	a := s.CreateTlsCrlTestArtifacts("quic")
 
-	Log(serverVpp.Vppctl("test tls server cert " + a.serverCert + " key " + a.serverKey + " uri quic://" + serverAddress))
+	Log(serverVpp.Vppctl("test tls server cert " + a.ServerCert + " key " + a.ServerKey + " uri quic://" + serverAddress))
 
 	uri := "quic://" + serverAddress
-	o := clientVpp.Vppctl("test tls client verify peer ca-cert " + a.caCert + " crl " + a.crl + " uri " + uri)
+	o := clientVpp.Vppctl("test tls client verify peer ca-cert " + a.CaCert + " crl " + a.Crl + " uri " + uri)
 	Log(o)
 	AssertContains(o, "connect error failed tls handshake")
 
@@ -35,7 +35,7 @@ func QuicCrlRejectThenAllowTest(s *VethsSuite) {
 	Log(o)
 	AssertContains(o, "accepted connections 0")
 
-	o = clientVpp.Vppctl("test tls client verify peer ca-cert " + a.caCert + " uri " + uri)
+	o = clientVpp.Vppctl("test tls client verify peer ca-cert " + a.CaCert + " uri " + uri)
 	Log(o)
 	AssertNotContains(o, "connect failed")
 	AssertNotContains(o, "timeout")
@@ -46,7 +46,7 @@ func QuicCrlRejectThenAllowTest(s *VethsSuite) {
 	AssertContains(o, "accepted connections 1")
 }
 
-func QuicAlpnMatchTest(s *VethsSuite) {
+func QuicAlpnMatchTest(s *QuicSuite) {
 	serverAddress := s.Interfaces.Server.Ip4AddressString() + ":" + s.Ports.Port1
 	Log(s.Containers.ServerVpp.VppInstance.Vppctl("test tls server alpn-proto1 3 uri quic://" + serverAddress))
 
@@ -59,7 +59,7 @@ func QuicAlpnMatchTest(s *VethsSuite) {
 	AssertContains(o, "ALPN selected: h3")
 }
 
-func QuicAlpnOverlapMatchTest(s *VethsSuite) {
+func QuicAlpnOverlapMatchTest(s *QuicSuite) {
 	serverAddress := s.Interfaces.Server.Ip4AddressString() + ":" + s.Ports.Port1
 	Log(s.Containers.ServerVpp.VppInstance.Vppctl("test tls server alpn-proto1 3 alpn-proto2 1 uri quic://" + serverAddress))
 
@@ -72,7 +72,7 @@ func QuicAlpnOverlapMatchTest(s *VethsSuite) {
 	AssertContains(o, "ALPN selected: h3")
 }
 
-func QuicAlpnServerPriorityMatchTest(s *VethsSuite) {
+func QuicAlpnServerPriorityMatchTest(s *QuicSuite) {
 	serverAddress := s.Interfaces.Server.Ip4AddressString() + ":" + s.Ports.Port1
 	Log(s.Containers.ServerVpp.VppInstance.Vppctl("test tls server alpn-proto1 3 alpn-proto2 1 uri quic://" + serverAddress))
 
@@ -85,7 +85,7 @@ func QuicAlpnServerPriorityMatchTest(s *VethsSuite) {
 	AssertContains(o, "ALPN selected: h3")
 }
 
-func QuicAlpnMismatchTest(s *VethsSuite) {
+func QuicAlpnMismatchTest(s *QuicSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 	clientVpp := s.Containers.ClientVpp.VppInstance
 	serverAddress := s.Interfaces.Server.Ip4AddressString() + ":" + s.Ports.Port1
@@ -112,7 +112,7 @@ func QuicAlpnMismatchTest(s *VethsSuite) {
 	AssertContains(o, "no sessions")
 }
 
-func QuicAlpnEmptyServerListTest(s *VethsSuite) {
+func QuicAlpnEmptyServerListTest(s *QuicSuite) {
 	serverAddress := s.Interfaces.Server.Ip4AddressString() + ":" + s.Ports.Port1
 	Log(s.Containers.ServerVpp.VppInstance.Vppctl("test tls server uri quic://" + serverAddress))
 
@@ -125,7 +125,7 @@ func QuicAlpnEmptyServerListTest(s *VethsSuite) {
 	AssertContains(o, "ALPN selected: none")
 }
 
-func QuicAlpnEmptyClientListTest(s *VethsSuite) {
+func QuicAlpnEmptyClientListTest(s *QuicSuite) {
 	serverAddress := s.Interfaces.Server.Ip4AddressString() + ":" + s.Ports.Port1
 	Log(s.Containers.ServerVpp.VppInstance.Vppctl("test tls server alpn-proto1 3 alpn-proto2 1 uri quic://" + serverAddress))
 
@@ -160,7 +160,7 @@ func QuicFailedHandshakeTest(s *NoTopoSuite) {
 	AssertContains(o, "active sessions 2", "expected only listeners")
 }
 
-func quicBuiltinEcho(s *VethsSuite, uni bool) {
+func quicBuiltinEcho(s *QuicSuite, uni bool) {
 	expr := `(\d+\.\d)-(\d+.\d)\s+(\d+\.\d+)[KMG]\s+0\s+\d+\.\d+[KMG]b/s\s+(\d?\.\d+)ms`
 	if uni {
 		expr = `(\d+\.\d)-(\d+.\d)\s+(\d+\.\d+)[KMG]\s+(\d+\.\d+)[KMG]\s+\d+\.\d+[KMG]b/s\s+(\d?\.\d+)ms`
@@ -189,15 +189,15 @@ func quicBuiltinEcho(s *VethsSuite, uni bool) {
 	}
 }
 
-func QuicBuiltinEchoTest(s *VethsSuite) {
+func QuicBuiltinEchoTest(s *QuicSuite) {
 	quicBuiltinEcho(s, false)
 }
 
-func QuicBuiltinEchoBidirectionalTest(s *VethsSuite) {
+func QuicBuiltinEchoBidirectionalTest(s *QuicSuite) {
 	quicBuiltinEcho(s, true)
 }
 
-func QuicBuiltinEchoTestBytesTest(s *VethsSuite) {
+func QuicBuiltinEchoTestBytesTest(s *QuicSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 	clientVpp := s.Containers.ClientVpp.VppInstance
 
@@ -212,7 +212,7 @@ func QuicBuiltinEchoTestBytesTest(s *VethsSuite) {
 	AssertNotContains(o, "failed")
 }
 
-func QuicBuiltinEchoTestBytesBidirectionalTest(s *VethsSuite) {
+func QuicBuiltinEchoTestBytesBidirectionalTest(s *QuicSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 	clientVpp := s.Containers.ClientVpp.VppInstance
 
@@ -227,7 +227,7 @@ func QuicBuiltinEchoTestBytesBidirectionalTest(s *VethsSuite) {
 	AssertNotContains(o, "failed")
 }
 
-func QuicCpsTest(s *VethsSuite) {
+func QuicCpsTest(s *QuicSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 	clientVpp := s.Containers.ClientVpp.VppInstance
 
@@ -246,7 +246,7 @@ func QuicCpsTest(s *VethsSuite) {
 	Log(clientVpp.Vppctl("show quic crypto context"))
 }
 
-func QuicReorderTest(s *VethsSuite) {
+func QuicReorderTest(s *QuicSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 	clientVpp := s.Containers.ClientVpp.VppInstance
 	clientVpp.Vppctl("set nsim poll-main-thread delay 0.1 ms bandwidth 10 gbps packet-size 1460 packets-per-drop 100 packets-per-reorder 5")

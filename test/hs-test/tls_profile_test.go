@@ -8,7 +8,7 @@ import (
 )
 
 func init() {
-	RegisterVethTests(
+	RegisterTlsTests(
 		TlsProfileBasicTest,
 		TlsProfileAllParamsTest,
 		TlsProfileCipherListTest,
@@ -21,6 +21,8 @@ func init() {
 		TlsProfileNegotiatedParamsTest,
 		TlsProfileNegotiatedVersionTest,
 		TlsProfileX25519EcdsaTest,
+	)
+	RegisterQuicTests(
 		QuicTlsProfileNegotiatedParamsTest,
 		QuicTlsProfileCipherFilterTest,
 		QuicTlsProfileGroupRestrictionTest,
@@ -28,7 +30,7 @@ func init() {
 }
 
 // Create profile with minimal config (cipher-list only)
-func TlsProfileBasicTest(s *VethsSuite) {
+func TlsProfileBasicTest(s *TlsSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 
 	// Create application first (tls_server creates app named "test_tls_server")
@@ -50,7 +52,7 @@ func TlsProfileBasicTest(s *VethsSuite) {
 }
 
 // Create profile with all parameters
-func TlsProfileAllParamsTest(s *VethsSuite) {
+func TlsProfileAllParamsTest(s *TlsSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 
 	serverAddress := s.Interfaces.Server.Ip4AddressString() + ":" + s.Ports.Port1
@@ -78,7 +80,7 @@ func TlsProfileAllParamsTest(s *VethsSuite) {
 }
 
 // Delete profile
-func TlsProfileDeleteTest(s *VethsSuite) {
+func TlsProfileDeleteTest(s *TlsSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 
 	serverAddress := s.Interfaces.Server.Ip4AddressString() + ":" + s.Ports.Port1
@@ -101,7 +103,7 @@ func TlsProfileDeleteTest(s *VethsSuite) {
 }
 
 // Listener uses profile cipher list
-func TlsProfileCipherListTest(s *VethsSuite) {
+func TlsProfileCipherListTest(s *TlsSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 	clientVpp := s.Containers.ClientVpp.VppInstance
 
@@ -130,7 +132,7 @@ func TlsProfileCipherListTest(s *VethsSuite) {
 }
 
 // Multiple profiles per app
-func TlsProfileMultipleTest(s *VethsSuite) {
+func TlsProfileMultipleTest(s *TlsSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 
 	serverAddress := s.Interfaces.Server.Ip4AddressString() + ":" + s.Ports.Port1
@@ -156,7 +158,7 @@ func TlsProfileMultipleTest(s *VethsSuite) {
 }
 
 // Min version enforcement
-func TlsProfileMinVersionTest(s *VethsSuite) {
+func TlsProfileMinVersionTest(s *TlsSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 	clientVpp := s.Containers.ClientVpp.VppInstance
 
@@ -184,7 +186,7 @@ func TlsProfileMinVersionTest(s *VethsSuite) {
 }
 
 // Max version enforcement
-func TlsProfileMaxVersionTest(s *VethsSuite) {
+func TlsProfileMaxVersionTest(s *TlsSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 	clientVpp := s.Containers.ClientVpp.VppInstance
 
@@ -211,7 +213,7 @@ func TlsProfileMaxVersionTest(s *VethsSuite) {
 }
 
 // Version range
-func TlsProfileVersionRangeTest(s *VethsSuite) {
+func TlsProfileVersionRangeTest(s *TlsSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 	clientVpp := s.Containers.ClientVpp.VppInstance
 
@@ -238,7 +240,7 @@ func TlsProfileVersionRangeTest(s *VethsSuite) {
 }
 
 // No profile specified (fallback to defaults)
-func TlsProfileFallbackDefaultTest(s *VethsSuite) {
+func TlsProfileFallbackDefaultTest(s *TlsSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 	clientVpp := s.Containers.ClientVpp.VppInstance
 
@@ -256,7 +258,7 @@ func TlsProfileFallbackDefaultTest(s *VethsSuite) {
 }
 
 // Verify negotiated cipher, TLS version, key agreement and signature algorithm are displayed
-func TlsProfileNegotiatedParamsTest(s *VethsSuite) {
+func TlsProfileNegotiatedParamsTest(s *TlsSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 	clientVpp := s.Containers.ClientVpp.VppInstance
 
@@ -310,7 +312,7 @@ func TlsProfileNegotiatedParamsTest(s *VethsSuite) {
 }
 
 // Verify negotiated TLS version with profile
-func TlsProfileNegotiatedVersionTest(s *VethsSuite) {
+func TlsProfileNegotiatedVersionTest(s *TlsSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 	clientVpp := s.Containers.ClientVpp.VppInstance
 
@@ -342,7 +344,7 @@ func TlsProfileNegotiatedVersionTest(s *VethsSuite) {
 // Verify that a TLS profile specifying groups=X25519 with ECDSA certificates
 // results in X25519 as the negotiated key agreement group and an ECDSA/SHA
 // signature algorithm.
-func TlsProfileX25519EcdsaTest(s *VethsSuite) {
+func TlsProfileX25519EcdsaTest(s *TlsSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 	clientVpp := s.Containers.ClientVpp.VppInstance
 
@@ -389,7 +391,7 @@ func TlsProfileX25519EcdsaTest(s *VethsSuite) {
 // QuicTlsProfileNegotiatedParamsTest verifies that cipher suite, key exchange
 // group, and TLS version are returned for a QUIC connection.  QUIC always uses
 // TLS 1.3, so version must always be "1.3".
-func QuicTlsProfileNegotiatedParamsTest(s *VethsSuite) {
+func QuicTlsProfileNegotiatedParamsTest(s *QuicSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 	clientVpp := s.Containers.ClientVpp.VppInstance
 
@@ -455,7 +457,7 @@ func QuicTlsProfileNegotiatedParamsTest(s *VethsSuite) {
 // ciphersuites restriction does not break the handshake. Note: QUIC always
 // requires TLS_AES_128_GCM_SHA256 for Initial packet protection, so that
 // cipher is retained even when the profile restricts to TLS_AES_256_GCM_SHA384.
-func QuicTlsProfileCipherFilterTest(s *VethsSuite) {
+func QuicTlsProfileCipherFilterTest(s *QuicSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 	clientVpp := s.Containers.ClientVpp.VppInstance
 
@@ -500,7 +502,7 @@ func QuicTlsProfileCipherFilterTest(s *VethsSuite) {
 // the first group from the *client*'s configured list, not necessarily the one
 // that was actually negotiated.  This test therefore only checks that the
 // connection succeeds and that the field is populated.
-func QuicTlsProfileGroupRestrictionTest(s *VethsSuite) {
+func QuicTlsProfileGroupRestrictionTest(s *QuicSuite) {
 	serverVpp := s.Containers.ServerVpp.VppInstance
 	clientVpp := s.Containers.ClientVpp.VppInstance
 

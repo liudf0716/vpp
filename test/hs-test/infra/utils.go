@@ -672,3 +672,9 @@ func GetCurrentTestName() string {
 func JoinHostPort(ip string, port string) string {
 	return net.JoinHostPort(ip, port)
 }
+
+func tlsCrlWriteFile(c *Container, filePath, contents string) {
+	_, err := c.Exec(false, "mkdir -p "+filepath.Dir(filePath))
+	AssertNil(err)
+	AssertNil(c.CreateFile(filePath, contents))
+}
