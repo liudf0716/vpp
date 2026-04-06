@@ -96,7 +96,7 @@ jobs:
     name: Checkstyle
     needs:
       - start-verify
-    uses: fdio/vpp/.github/workflows/vpp-verify-checkstyle.yml@09552c71554236d36c1eb51a1740a366019bc1a5
+    uses: fdio/vpp/.github/workflows/vpp-verify-checkstyle.yml@bb78eb9bf95b89f0a9d5784614ed645c79d3a973
     with:
       FDIO_NAMESPACE: ${{ inputs.FDIO_NAMESPACE }}
       GERRIT_BRANCH: ${{ inputs.GERRIT_BRANCH }}
