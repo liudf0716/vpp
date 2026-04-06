@@ -178,6 +178,14 @@ jobs:
           GERRIT_REFSPEC: ${{ env.GERRIT_REFSPEC }}
           TUI_LINE: ${{ env.TUI_LINE }}
 
+      - name: Install VPP dependencies
+        # yamllint disable-line rule:line-length
+        uses: fdio/vpp/.github/actions/vpp-install-deps@777792ecef2d5c93ce15fa5b7fdca999f5412c9d
+        with:
+          LOG_DIR: ${{ env.LOG_DIR }}
+          WORKSPACE: ${{ env.WORKSPACE }}
+          TUI_LINE: ${{ env.TUI_LINE }}
+
       - name: Run Checkstyle Scripts
         run: |
           set -euxo pipefail
