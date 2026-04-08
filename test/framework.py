@@ -164,7 +164,7 @@ class VppTestCase(VppAsfTestCase):
     @classmethod
     def create_pg_interfaces_internal(
         cls, interfaces, csum_offload=0, gso=0, gso_size=0, mode=None
-    ):
+    ) -> list[VppPGInterface]:
         """
         Create packet-generator interfaces.
 
@@ -181,7 +181,9 @@ class VppTestCase(VppAsfTestCase):
         return result
 
     @classmethod
-    def create_pg_ip4_interfaces(cls, interfaces, csum_offload=0, gso=0, gso_size=0):
+    def create_pg_ip4_interfaces(
+        cls, interfaces, csum_offload=0, gso=0, gso_size=0
+    ) -> list[VppPGInterface]:
         if not hasattr(cls, "vpp"):
             cls.pg_interfaces = []
             return cls.pg_interfaces
@@ -191,7 +193,9 @@ class VppTestCase(VppAsfTestCase):
         )
 
     @classmethod
-    def create_pg_ip6_interfaces(cls, interfaces, csum_offload=0, gso=0, gso_size=0):
+    def create_pg_ip6_interfaces(
+        cls, interfaces, csum_offload=0, gso=0, gso_size=0
+    ) -> list[VppPGInterface]:
         if not hasattr(cls, "vpp"):
             cls.pg_interfaces = []
             return cls.pg_interfaces
@@ -201,7 +205,9 @@ class VppTestCase(VppAsfTestCase):
         )
 
     @classmethod
-    def create_pg_interfaces(cls, interfaces, csum_offload=0, gso=0, gso_size=0):
+    def create_pg_interfaces(
+        cls, interfaces, csum_offload=0, gso=0, gso_size=0
+    ) -> list[VppPGInterface]:
         if not hasattr(cls, "vpp"):
             cls.pg_interfaces = []
             return cls.pg_interfaces
