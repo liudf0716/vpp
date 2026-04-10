@@ -939,17 +939,16 @@ show_session_command_fn (vlib_main_t *vm, unformat_input_t *input,
       goto done;
     }
 
+  if (do_tree)
+    {
+      session_cli_show_session_tree (vm, sf.flags & SESSION_CLI_FILTER_FORCE_PRINT);
+      goto done;
+    }
+
   if (do_filter)
     {
       sf.verbose = verbose;
       session_cli_show_session_filter (vm, &sf);
-      goto done;
-    }
-
-  if (do_tree)
-    {
-      session_cli_show_session_tree (vm, sf.flags &
-					   SESSION_CLI_FILTER_FORCE_PRINT);
       goto done;
     }
 
