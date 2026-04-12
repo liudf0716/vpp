@@ -1871,11 +1871,10 @@ openssl_reinit_ca_chain (void)
 static clib_error_t *
 openssl_unformat_cfg (unformat_input_t *input)
 {
-  char *provider_name = NULL;
-
   while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
     {
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L
+      char *provider_name = NULL;
       if (unformat (input, "provider %s", &provider_name))
 	{
 	  if (openssl_provider_register (provider_name) < 0)
