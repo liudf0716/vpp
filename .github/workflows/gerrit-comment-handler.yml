@@ -165,7 +165,7 @@ jobs:
         uses: fdio/csit/.github/actions/csit-bootstrap@6e2e8dd6eae1a9297bfcc3a1630be181191a0553
         with:
           bootstrap_script: per_patch_perf.sh
-          path: ${{ env.WORKSPACE }}/csit
+          path: ${{ env.CSIT_WORKSPACE }}
           with_oper: true
 
       - name: AWS S3 Publish Logs
