@@ -1385,6 +1385,7 @@ session_open_stream (session_endpoint_cfg_t *sep, session_handle_t *rsh)
   if (PREDICT_FALSE (!s))
     return SESSION_E_INVALID;
 
+  *rsh = session_handle (s);
   s->app_wrk_index = app_wrk->wrk_index;
   s->opaque = sep->opaque;
   s->flags |= SESSION_F_STREAM;
@@ -1397,6 +1398,8 @@ session_open_stream (session_endpoint_cfg_t *sep, session_handle_t *rsh)
     }
 
   rv = transport_connect_stream (sep->transport_proto, tep, s, &conn_index);
+  /* regrab session, pool might grow, transport like h3 might open quic stream */
+  s = session_get_from_handle (*rsh);
   if (rv < 0)
     {
       SESSION_DBG ("Transport failed to open stream.");
@@ -1416,7 +1419,6 @@ session_open_stream (session_endpoint_cfg_t *sep, session_handle_t *rsh)
   /* Attach transport to session and vice versa */
   s->connection_index = tc->c_index;
   tc->s_index = s->session_index;
-  *rsh = session_handle (s);
 
   /* builtin apps are synchronous */
   if (app_worker_application_is_builtin (app_wrk))
