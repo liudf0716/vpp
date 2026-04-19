@@ -958,9 +958,10 @@ http1_req_state_wait_transport_method (http_ctx_t *hc, http_ctx_t *req, transpor
     {
       if (rv == 2)
 	{
+	  http1_conn_free_req (hc);
+	  hc->hc_parent_req_index = SESSION_INVALID_INDEX;
 	  http_conn_upgrade_version (hc, HTTP_VERSION_2);
 	  hc->flags |= HTTP_CONN_F_EXPECT_PREFACE;
-	  http1_conn_free_req (hc);
 	  return HTTP_SM_STOP;
 	}
       goto error;

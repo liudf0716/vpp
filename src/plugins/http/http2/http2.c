@@ -2995,6 +2995,13 @@ http2_transport_rx_callback (http_ctx_t *hc)
 
   if (hc->flags & HTTP_CONN_F_EXPECT_PREFACE)
     {
+      if (hc->flags & HTTP_CONN_F_NEED_REINIT)
+	{
+	  hc->flags &= ~HTTP_CONN_F_NEED_REINIT;
+	  http2_conn_init (hc, 0);
+	  /* pool grow, regrab connection */
+	  hc = http_ctx_get_w_thread (hc_index, thread_index);
+	}
       if (to_deq < http2_conn_preface.len)
 	{
 	  HTTP_DBG (1, "to_deq %u is less than conn preface size", to_deq);
@@ -3009,13 +3016,6 @@ http2_transport_rx_callback (http_ctx_t *hc)
 	  http_disconnect_transport (hc);
 	  http_stats_proto_errors_inc (hc->c_thread_index);
 	  return;
-	}
-      if (hc->flags & HTTP_CONN_F_NEED_REINIT)
-	{
-	  hc->flags &= ~HTTP_CONN_F_NEED_REINIT;
-	  http2_conn_init (hc, 0);
-	  /* pool grow, regrab connection */
-	  hc = http_ctx_get_w_thread (hc_index, thread_index);
 	}
       http2_send_server_preface (hc);
       http_io_ts_drain (hc, http2_conn_preface.len);

@@ -18,9 +18,30 @@ import (
 func init() {
 	RegisterH2Tests(Http2TcpGetTest, Http2TcpPostTest, Http2MultiplexingTest, Http2TlsTest, Http2ContinuationTxTest,
 		Http2ServerMemLeakTest, Http2ClientGetTest, Http2ClientPostTest, Http2ClientPostPtrTest, Http2ClientGetRepeatTest,
-		Http2ClientMultiplexingTest, Http2ClientH2cTest, Http2ClientMemLeakTest, Htttp2TlsNoAlpnTest)
+		Http2ClientMultiplexingTest, Http2ClientH2cTest, Http2ClientMemLeakTest, Htttp2TlsNoAlpnTest,
+		Http2TcpClientCloseDuringHandshakeTest)
 	RegisterH2MWTests(Http2MultiplexingMWTest, Http2ClientMultiplexingMWTest)
 	RegisterVethTests(Http2CliTlsTest, Http2ClientContinuationTest, Http2ClientPostFormTest, Http2ClientPostFormPtrTest)
+}
+
+func Http2TcpClientCloseDuringHandshakeTest(s *Http2Suite) {
+	vpp := s.Containers.Vpp.VppInstance
+	serverAddress := s.VppAddr() + ":" + s.Ports.Port1
+	Log(vpp.Vppctl("http static server uri http://" + serverAddress + " url-handlers debug"))
+
+	conn, err := net.DialTimeout("tcp", serverAddress, time.Second*30)
+	AssertNil(err)
+	err = conn.SetDeadline(time.Now().Add(time.Second * 30))
+	AssertNil(err)
+	_, err = conn.Write([]byte("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"))
+	AssertNil(err)
+	conn.Close()
+	time.Sleep(2 * time.Second)
+	o := vpp.Vppctl("show http")
+	AssertContains(o, "Thread 0: ctx pool 2/4", "http ctx not cleanup")
+	o = vpp.Vppctl("show session verbose 2")
+	Log(o)
+	AssertContains(o, "Thread 0: active sessions 2", "http sessions not cleanup")
 }
 
 func Http2TcpGetTest(s *Http2Suite) {
