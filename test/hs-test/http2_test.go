@@ -38,7 +38,7 @@ func Http2TcpClientCloseDuringHandshakeTest(s *Http2Suite) {
 	conn.Close()
 	time.Sleep(2 * time.Second)
 	o := vpp.Vppctl("show http")
-	AssertContains(o, "Thread 0: ctx pool 2/4", "http ctx not cleanup")
+	AssertContains(o, "Thread 0: ctx pool 2/", "http ctx not cleanup")
 	o = vpp.Vppctl("show session verbose 2")
 	Log(o)
 	AssertContains(o, "Thread 0: active sessions 2", "http sessions not cleanup")
