@@ -56,15 +56,9 @@ echo_assert_test_suceeded (echo_main_t * em)
 always_inline void
 echo_session_dequeue_notify (echo_session_t * s)
 {
-  int rv;
-  if (!svm_fifo_set_event (s->rx_fifo))
-    return;
-  if ((rv =
-	 app_send_io_evt_to_vpp (s->vpp_evt_q, s->rx_fifo->vpp_session_index,
-				 SESSION_IO_EVT_RX, SVM_Q_WAIT)))
-    ECHO_FAIL (ECHO_FAIL_SEND_IO_EVT, "app_send_io_evt_to_vpp errored %d",
-	       rv);
   svm_fifo_clear_deq_ntf (s->rx_fifo);
+  app_send_io_evt_to_vpp (s->vpp_evt_q, s->rx_fifo->vpp_session_index, SESSION_IO_EVT_RX,
+			  SVM_Q_WAIT);
 }
 
 static void
@@ -429,10 +423,8 @@ echo_handle_data (echo_main_t * em, echo_session_t * s, u8 * rx_buf)
       else if (s->idle_cycles++ == LOG_EVERY_N_IDLE_CYCLES)
 	{
 	  s->idle_cycles = 0;
-	  ECHO_LOG (2, "Idle client TX:%dB RX:%dB", s->bytes_to_send,
-		    s->bytes_to_receive);
-	  ECHO_LOG (2, "Idle FIFOs TX:%dB RX:%dB",
-		    svm_fifo_max_dequeue (s->tx_fifo),
+	  ECHO_LOG (2, "Idle client TX:%luB RX:%luB", s->bytes_to_send, s->bytes_to_receive);
+	  ECHO_LOG (2, "Idle FIFOs TX:%uB RX:%uB", svm_fifo_max_dequeue (s->tx_fifo),
 		    svm_fifo_max_dequeue (s->rx_fifo));
 	  ECHO_LOG (2, "Session 0x%lx state %U", s->vpp_session_handle,
 		    echo_format_session_state, s->session_state);
