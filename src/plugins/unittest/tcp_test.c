@@ -645,6 +645,57 @@ tcp_test_sack_rx (vlib_main_t * vm, unformat_input_t * input)
   tcp_rcv_sacks (tc, tc->snd_una);
 
   /*
+   * Exercise nested received SACK blocks:
+   * snd_una=100
+   *   |----- lost hole -----|
+   *                         35300                 102700
+   *                         |<------ outer sack ------>|
+   *                           35700            36700
+   *                           |---- inner sack ----|
+   *
+   * The scoreboard starts with:
+   * - one lost hole [100, 35300]
+   * - stale high_sacked = 36700
+   * - pre-existing sacked_bytes = 67000
+   */
+  scoreboard_clear (sb);
+  vec_reset_length (tc->rcv_opts.sacks);
+
+  tc->flags = TCP_CONN_FAST_RECOVERY | TCP_CONN_FINPNDG;
+  tc->snd_una = 100;
+  tc->snd_nxt = 102700;
+  sb->reorder = 3;
+  sb->high_sacked = 36700;
+  block.start = 35300;
+  block.end = 102700;
+  vec_add1 (tc->rcv_opts.sacks, block);
+  block.start = 35700;
+  block.end = 36700;
+  vec_add1 (tc->rcv_opts.sacks, block);
+  tc->rcv_opts.n_sack_blocks = vec_len (tc->rcv_opts.sacks);
+  pool_get (sb->holes, hole);
+  clib_memset (hole, 0, sizeof (*hole));
+  hole->start = tc->snd_una;
+  hole->end = 35300;
+  hole->next = TCP_INVALID_SACK_HOLE_INDEX;
+  hole->prev = TCP_INVALID_SACK_HOLE_INDEX;
+  hole->is_lost = 1;
+  sb->head = sb->tail = scoreboard_hole_index (sb, hole);
+  sb->lost_bytes = scoreboard_hole_bytes (hole);
+  sb->cur_rxt_hole = sb->head;
+  sb->high_rxt = 35300;
+  sb->rescue_rxt = tc->snd_nxt;
+  sb->sacked_bytes = 67000;
+
+  tcp_rcv_sacks (tc, tc->snd_una);
+
+  TCP_TEST ((sb->high_sacked == 102700), "high sacked %u", sb->high_sacked);
+  TCP_TEST ((sb->sacked_bytes == 67400), "sacked bytes %u", sb->sacked_bytes);
+  TCP_TEST ((sb->last_sacked_bytes == 400), "last sacked bytes %u", sb->last_sacked_bytes);
+  TCP_TEST ((sb->lost_bytes == 35200), "lost bytes %u", sb->lost_bytes);
+  TCP_TEST ((!sb->is_reneging), "is not reneging");
+
+  /*
    * Clear
    */
   scoreboard_clear (sb);
