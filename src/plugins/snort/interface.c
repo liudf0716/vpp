@@ -30,15 +30,11 @@ static void
 snort_feature_enable_disable (u32 sw_if_index, int is_enable, int input,
 			      int output)
 {
-  u32 fa_data = input ? 1 : 0 | output ? 1 : 0;
-
   if (input)
-    vnet_feature_enable_disable ("ip4-unicast", "snort-ip4-input", sw_if_index,
-				 is_enable, &fa_data, sizeof (fa_data));
+    vnet_feature_enable_disable ("ip4-unicast", "snort-ip4-input", sw_if_index, is_enable, NULL, 0);
 
   if (output)
-    vnet_feature_enable_disable ("ip4-output", "snort-ip4-output", sw_if_index,
-				 is_enable, &fa_data, sizeof (fa_data));
+    vnet_feature_enable_disable ("ip4-output", "snort-ip4-output", sw_if_index, is_enable, NULL, 0);
 }
 
 int
