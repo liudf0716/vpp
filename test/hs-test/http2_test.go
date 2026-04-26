@@ -427,7 +427,7 @@ func Http2ClientContinuationTest(s *VethsSuite) {
 	s.Containers.ServerVpp.VppInstance.Vppctl("http tps uri https://" + serverAddress + " no-zc")
 
 	uri := fmt.Sprintf("https://%s/test_file_64?test_header=32k", serverAddress)
-	o := s.Containers.ClientVpp.VppInstance.Vppctl("http client fifo-size 64k verbose save-to response.txt uri " + uri)
+	o := s.Containers.ClientVpp.VppInstance.Vppctl("http client fifo-size 128k verbose save-to response.txt uri " + uri)
 	Log(o)
 	AssertContains(o, "HTTP/2 200 OK")
 	AssertGreaterEqual(strings.Count(o, "x"), 32768)

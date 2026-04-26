@@ -874,6 +874,41 @@ http2_sched_dispatch_continuation (http_ctx_t *req, http_ctx_t *hc, u8 *n_emissi
 }
 
 static void
+http_sched_dispatch_431 (http_ctx_t *req, http_ctx_t *hc, u8 *n_emissions,
+			 clib_llist_index_t *next_ri)
+{
+  u8 *response, *date;
+  u32 headers_len;
+  hpack_response_control_data_t control_data;
+  u8 fh[HTTP2_FRAME_HEADER_SIZE];
+
+  *n_emissions += HTTP2_SCHED_WEIGHT_HEADERS_PTR;
+  *next_ri = clib_llist_next_index (req, stream_sched_list);
+  response = http_get_tx_buf (hc);
+  date = format (0, "%U", format_http_time_now, hc);
+  control_data.content_len = HPACK_ENCODER_SKIP_CONTENT_LEN;
+  control_data.server_name = hc->app_name;
+  control_data.server_name_len = vec_len (hc->app_name);
+  control_data.date = date;
+  control_data.date_len = vec_len (date);
+  control_data.sc = HTTP_STATUS_REQUEST_HEADER_FIELDS_TOO_LARGE;
+  hpack_serialize_response (0, 0, &control_data, &response);
+  vec_free (date);
+  headers_len = vec_len (response);
+  http2_frame_write_headers_header (headers_len, req->stream_id,
+				    HTTP2_FRAME_FLAG_END_HEADERS | HTTP2_FRAME_FLAG_END_STREAM, fh);
+  svm_fifo_seg_t segs[2] = { { fh, HTTP2_FRAME_HEADER_SIZE }, { response, headers_len } };
+  http_io_ts_write_segs (hc, segs, 2, 0);
+  http_io_ts_after_write (hc, 0);
+  http_stats_responses_sent_inc (hc->c_thread_index);
+  /* notify app that nothing will happen and free request */
+  if (!(req->req_flags & HTTP_REQ_F_APP_CLOSED))
+    session_transport_reset_notify (&req->connection);
+  session_transport_delete_notify (&req->connection);
+  http2_conn_free_req (hc, req, hc->c_thread_index);
+}
+
+static void
 http2_sched_dispatch_resp_headers (http_ctx_t *req, http_ctx_t *hc, u8 *n_emissions,
 				   clib_llist_index_t *next_ri)
 {
@@ -1294,7 +1329,7 @@ http2_req_state_wait_transport_reply (http_ctx_t *hc, http_ctx_t *req, transport
 
   vec_reset_length (req->headers);
   *error = hpack_parse_response (req->payload, req->payload_len, wrk->header_list,
-				 vec_len (wrk->header_list), &control_data, &req->headers,
+				 hc->settings.max_header_list_size, &control_data, &req->headers,
 				 &hc->decoder_dynamic_table);
   if (*error != HTTP2_ERROR_NO_ERROR)
     {
@@ -1415,14 +1450,30 @@ http2_req_state_wait_transport_method (http_ctx_t *hc, http_ctx_t *req, transpor
   int rv;
   http_req_state_t new_state = HTTP_REQ_STATE_WAIT_APP_REPLY;
   http_worker_t *wrk = http_worker_get (hc->c_thread_index);
+  http_ctx_t *he;
 
   http_stats_requests_received_inc (hc->c_thread_index);
 
   *error = hpack_parse_request (req->payload, req->payload_len, wrk->header_list,
-				vec_len (wrk->header_list), &control_data, &req->headers,
+				hc->settings.max_header_list_size, &control_data, &req->headers,
 				&hc->decoder_dynamic_table);
   if (*error != HTTP2_ERROR_NO_ERROR)
     {
+      /* internal error is returned only when uncompressed headers exceeded maximum value, in this
+       * case we should response with 431 (Request Header Fields Too Large) status code */
+      if (*error == HTTP2_ERROR_INTERNAL_ERROR)
+	{
+	  HTTP_DBG (1, "MAX_HEADER_LIST_SIZE exceeded");
+	  *error = HTTP2_ERROR_NO_ERROR;
+	  req->dispatch_headers_cb = http_sched_dispatch_431;
+	  /* in case we receive data meanwhile */
+	  http_req_state_change (req, HTTP_REQ_STATE_TRANSPORT_IO_DROP);
+	  /* schedule response */
+	  he = clib_llist_elt (wrk->ctx_pool, hc->new_tx_streams);
+	  clib_llist_add_tail (wrk->ctx_pool, stream_sched_list, req, he);
+	  http2_conn_schedule (hc, hc->c_thread_index);
+	  return HTTP_SM_STOP;
+	}
       HTTP_DBG (1, "hpack_parse_request failed");
       return HTTP_SM_ERROR;
     }
@@ -1615,6 +1666,15 @@ http2_req_state_wait_transport_method (http_ctx_t *hc, http_ctx_t *req, transpor
   if (req->stream_id > hc->last_processed_stream_id)
     hc->last_processed_stream_id = req->stream_id;
 
+  return HTTP_SM_STOP;
+}
+
+static http_sm_result_t
+http2_req_state_transport_io_drop (http_ctx_t *hc, http_ctx_t *req, transport_send_params_t *sp,
+				   http2_error_t *error)
+{
+  ASSERT (hc->flags & HTTP_CONN_F_IS_SERVER);
+  /* nothing to do here we just want drop data */
   return HTTP_SM_STOP;
 }
 
@@ -1978,6 +2038,7 @@ static http2_sm_handler tx_state_funcs[HTTP_REQ_N_STATES] = {
   http2_req_state_tunnel_tx, /* we use different scheduler data dispatch cb */
   http2_req_state_tunnel_tx, /* we use different scheduler data dispatch cb */
   0,			     /* app io more streaming data */
+  0,			     /* transport io drop */
 };
 
 static http2_sm_handler rx_state_funcs[HTTP_REQ_N_STATES] = {
@@ -1992,6 +2053,7 @@ static http2_sm_handler rx_state_funcs[HTTP_REQ_N_STATES] = {
   http2_req_state_udp_tunnel_rx,
   http2_req_state_udp_tunnel_draft03_rx,
   0, /* app io more streaming data */
+  http2_req_state_transport_io_drop,
 };
 
 static_always_inline int

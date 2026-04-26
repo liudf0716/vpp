@@ -83,7 +83,8 @@ typedef enum http_conn_state_ : u8
   _ (7, TUNNEL, "tunnel")                                                                          \
   _ (8, UDP_TUNNEL, "udp tunnel")                                                                  \
   _ (9, UDP_TUNNEL_DRAFT03, "udp tunnel draft03")                                                  \
-  _ (10, APP_IO_MORE_STREAMING_DATA, "app io more streaming data")
+  _ (10, APP_IO_MORE_STREAMING_DATA, "app io more streaming data")                                 \
+  _ (11, TRANSPORT_IO_DROP, "transport io drop")
 
 typedef enum http_req_state_ : u8
 {

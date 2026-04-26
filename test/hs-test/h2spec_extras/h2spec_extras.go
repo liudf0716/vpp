@@ -36,6 +36,7 @@ func Spec() *spec.TestGroup {
 	tg.AddTestGroup(ConnectMethod())
 	tg.AddTestGroup(ExtendedConnectMethod())
 	tg.AddTestGroup(PingAnomaly())
+	tg.AddTestGroup(HeaderListSize())
 
 	return tg
 }
@@ -1181,6 +1182,77 @@ func PingAnomaly() *spec.TestGroup {
 			}
 			conn.Send([]byte("\x00\x00\x08\x06\x00\x00\x00\x00\x00\x00\xDE\xAD\xBE\xEF\xDE\xAD\xBE\xEF"))
 			return spec.VerifyConnectionError(conn, http2.ErrCodeProtocol)
+		},
+	})
+	return tg
+}
+
+func HeaderListSize() *spec.TestGroup {
+	tg := NewTestGroup("5", "Max Header List Size")
+	tg.AddTestCase(&spec.TestCase{
+		Desc:        "Send field blocks that exceed SETTINGS_MAX_HEADER_LIST_SIZE",
+		Requirement: "An endpoint can use the SETTINGS_MAX_HEADER_LIST_SIZE to advise peers of limits that might apply on the size of uncompressed field blocks. A server that receives a larger field block than it is willing to handle can send an HTTP 431 (Request Header Fields Too Large) status code.",
+		Run: func(c *config.Config, conn *spec.Conn) error {
+			var streamID uint32 = 1
+
+			err := conn.Handshake()
+			if err != nil {
+				return err
+			}
+			maxHeaderListSize, ok := conn.Settings[http2.SettingMaxHeaderListSize]
+			if !ok {
+				return &spec.TestError{
+					Expected: []string{"SETTINGS_MAX_HEADER_LIST_SIZE received"},
+					Actual:   "SETTINGS_MAX_HEADER_LIST_SIZE not received",
+				}
+			}
+
+			headers := spec.CommonHeaders(c)
+			headers = append(headers, spec.HeaderField("x-test", strings.Repeat("A", int(maxHeaderListSize)*2)))
+			hp := http2.HeadersFrameParam{
+				StreamID:      streamID,
+				EndStream:     true,
+				EndHeaders:    true,
+				BlockFragment: conn.EncodeHeaders(headers),
+			}
+			conn.WriteHeaders(hp)
+
+			// verify ":status: 431" in response
+			actual, passed := conn.WaitEventByType(spec.EventHeadersFrame)
+			switch event := actual.(type) {
+			case spec.HeadersFrameEvent:
+				passed = event.Header().StreamID == streamID
+			default:
+				passed = false
+			}
+			if !passed {
+				expected := []string{
+					fmt.Sprintf("HEADERS Frame (stream_id:%d)", streamID),
+				}
+
+				return &spec.TestError{
+					Expected: expected,
+					Actual:   actual.String(),
+				}
+			}
+			hf, _ := actual.(spec.HeadersFrameEvent)
+			respHeaders := make([]hpack.HeaderField, 0, 256)
+			decoder := hpack.NewDecoder(4096, func(f hpack.HeaderField) { respHeaders = append(respHeaders, f) })
+			_, err = decoder.Write(hf.HeaderBlockFragment())
+			if err != nil {
+				return err
+			}
+			if !slices.Contains(respHeaders, spec.HeaderField(":status", "431")) {
+				hs := ""
+				for _, h := range respHeaders {
+					hs += h.String() + "\n"
+				}
+				return &spec.TestError{
+					Expected: []string{"\":status: 431\" header received"},
+					Actual:   hs,
+				}
+			}
+			return nil
 		},
 	})
 	return tg
