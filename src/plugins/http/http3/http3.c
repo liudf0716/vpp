@@ -230,6 +230,10 @@ http3_conn_init (u32 parent_index, clib_thread_index_t thread_index, http_ctx_t 
     }
   ctrl_stream->http_req_index = SESSION_INVALID_INDEX;
   hc->our_ctrl_stream_index = ctrl_stream->hc_hc_index;
+  hc->settings = hm->h3_settings;
+  /* adjust settings according to app rx_fifo size */
+  hc->settings.max_field_section_size =
+    clib_min (hc->settings.max_field_section_size, hc->hc_app_rx_fifo_size - sizeof (http_msg_t));
   http_stats_ctrl_streams_opened_inc (thread_index);
 
   buf = http_get_tx_buf (ctrl_stream);
@@ -795,6 +799,40 @@ http3_stream_resp_not_implemented (http_ctx_t *stream, http_ctx_t *req)
     }                                                                                              \
   while (0);
 
+static void
+http3_send_431 (http_ctx_t *stream, http_ctx_t *req)
+{
+  hpack_response_control_data_t control_data;
+  u8 *response, *date;
+  u8 fh_buf[HTTP3_FRAME_HEADER_MAX_LEN];
+  u8 fh_len;
+  u32 headers_len;
+
+  ASSERT (stream->flags & HTTP_CONN_F_IS_SERVER);
+  response = http_get_tx_buf (stream);
+  date = format (0, "%U", format_http_time_now, stream);
+  control_data.content_len = HPACK_ENCODER_SKIP_CONTENT_LEN;
+  control_data.server_name = stream->app_name;
+  control_data.server_name_len = vec_len (stream->app_name);
+  control_data.date = date;
+  control_data.date_len = vec_len (date);
+  control_data.sc = HTTP_STATUS_REQUEST_HEADER_FIELDS_TOO_LARGE;
+  qpack_serialize_response (0, 0, &control_data, &response);
+  vec_free (date);
+  headers_len = vec_len (response);
+  fh_len = http3_frame_header_write (HTTP3_FRAME_TYPE_HEADERS, headers_len, fh_buf);
+  svm_fifo_seg_t segs[2] = { { fh_buf, fh_len }, { response, headers_len } };
+  http_io_ts_write_segs (stream, segs, 2, 0);
+  http_io_ts_after_write (stream, 0);
+  http_stats_responses_sent_inc (stream->c_thread_index);
+  /* notify app that nothing will happen */
+  if (!(req->req_flags & HTTP_REQ_F_APP_CLOSED))
+    session_transport_reset_notify (&req->connection);
+  http_close_transport_stream (stream);
+  http_io_ts_after_write (stream, 0);
+  http_stats_responses_sent_inc (stream->c_thread_index);
+}
+
 static http_sm_result_t
 http3_req_state_wait_transport_method (http_ctx_t *stream, http_ctx_t *req,
 				       transport_send_params_t *sp, http3_error_t *error,
@@ -825,18 +863,27 @@ http3_req_state_wait_transport_method (http_ctx_t *stream, http_ctx_t *req,
   *n_deq = req->fh.length;
 
   hc = http_ctx_get_w_thread (stream->hc_http_conn_index, stream->c_thread_index);
-  *error =
-    qpack_parse_request (rx_buf, req->fh.length, wrk->header_list, vec_len (wrk->header_list),
-			 &control_data, &req->headers, &hc->qpack_decoder_ctx);
+  *error = qpack_parse_request (rx_buf, req->fh.length, wrk->header_list,
+				hc->settings.max_field_section_size, &control_data, &req->headers,
+				&hc->qpack_decoder_ctx);
   if (*error != HTTP3_ERROR_NO_ERROR)
     {
       HTTP_DBG (1, "qpack_parse_request failed: %U", format_http3_error, *error);
-      /* message error is only stream error, otherwise it's connection error */
+      /* message error is only stream error */
       if (*error == HTTP3_ERROR_MESSAGE_ERROR)
 	{
 	  http3_stream_terminate (stream, req, HTTP3_ERROR_MESSAGE_ERROR);
 	  return HTTP_SM_STOP;
 	}
+      /* internal error is returned only when uncompressed headers exceeded maximum value, in this
+       * case we should response with 431 (Request Header Fields Too Large) status code */
+      else if (*error == HTTP3_ERROR_INTERNAL_ERROR)
+	{
+	  HTTP_DBG (1, "MAX_FIELD_SECTION_SIZE exceeded");
+	  http3_send_431 (stream, req);
+	  return HTTP_SM_STOP;
+	}
+      /* otherwise it's connection error */
       return HTTP_SM_ERROR;
     }
 
@@ -1039,9 +1086,9 @@ http3_req_state_wait_transport_reply (http_ctx_t *stream, http_ctx_t *req,
   hc = http_ctx_get_w_thread (stream->hc_http_conn_index, stream->c_thread_index);
 
   vec_reset_length (req->headers);
-  *error =
-    qpack_parse_response (rx_buf, req->fh.length, wrk->header_list, vec_len (wrk->header_list),
-			  &control_data, &req->headers, &hc->qpack_decoder_ctx);
+  *error = qpack_parse_response (rx_buf, req->fh.length, wrk->header_list,
+				 hc->settings.max_field_section_size, &control_data, &req->headers,
+				 &hc->qpack_decoder_ctx);
   if (*error != HTTP3_ERROR_NO_ERROR)
     {
       HTTP_DBG (1, "qpack_parse_response failed");

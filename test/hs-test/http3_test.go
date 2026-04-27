@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -22,7 +23,7 @@ func init() {
 		Http3DataFrameOnCtrlStreamTest, Http3GoawayOnReqStreamTest, Http3SecondSettingsFrameTest,
 		Http3ReservedSettingsTest, Http3MissingSettingsTest, Http3SecondCtrlStreamTest, Http3CtrlStreamClosedTest,
 		Http3QpackDecompressionFailedTest, Http3ClientOpenPushStreamTest, Http3DataBeforeHeadersTest,
-		Http3StaticGetTest)
+		Http3StaticGetTest, Http3MaxHeaderListSizeTest)
 	RegisterH3MWTests(Http3ClientFailedConnectMWTest)
 	RegisterVethTests(Http3CliTest, Http3ClientPostTest, Http3ClientPostPtrTest)
 }
@@ -291,6 +292,27 @@ func Http3ClientPostTest(s *VethsSuite) {
 
 func Http3ClientPostPtrTest(s *VethsSuite) {
 	http3ClientPostFile(s, true)
+}
+
+func Http3MaxHeaderListSizeTest(s *Http3Suite) {
+	vpp := s.Containers.Vpp.VppInstance
+	serverAddress := s.VppAddr() + ":" + s.Ports.Port1
+	uri := "https://" + serverAddress
+	Log(vpp.Vppctl("http tps fifo-size 8k no-zc h3 uri " + uri))
+
+	conn := H3ClientConnect(serverAddress)
+	defer conn.CloseWithError(0, "")
+	h3c := (&http3.Transport{}).NewClientConn(conn)
+	req, err := http.NewRequest(http.MethodGet, uri+"/test_file_64", nil)
+	AssertNil(err)
+	req.Header = http.Header{"x-test": {strings.Repeat("A", 8192)}}
+	stream, err := h3c.OpenRequestStream(context.Background())
+	AssertNil(err)
+	err = stream.SendRequestHeader(req)
+	AssertNil(err)
+	resp, err := stream.ReadResponse()
+	Log(DumpHttpResp(resp, true))
+	AssertHttpStatus(resp, 431)
 }
 
 func Http3PeerResetStream(s *Http3Suite) {
