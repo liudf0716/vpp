@@ -59,6 +59,7 @@ typedef struct quic_quicly_crypto_ctx_
   char cid_key[QUIC_CID_KEY_LEN];
   ptls_context_t ptls_ctx;
   tls_verify_cfg_t verify_cfg;
+  ptls_openssl_sign_certificate_t sc;
   u32 ca_trust_index;
   u32 crypto_owner_app_wrk_id;
   quic_quicly_verify_certificate_t verify_cert;
