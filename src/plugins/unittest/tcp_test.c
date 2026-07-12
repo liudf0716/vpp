@@ -8,6 +8,8 @@
 #include <vnet/tcp/tcp_timer.h>
 #include <svm/fifo_segment.h>
 #include <unittest/session/test_session_helpers.h>
+#include <unittest/tcp/tcp_tamper.h>
+#include <unittest/tcp/tcp_e2e_helpers.h>
 
 #define TCP_TEST_I(_cond, _comment, _args...)			\
 ({								\
@@ -2753,6 +2755,304 @@ tcp_test_rto (vlib_main_t *vm, unformat_input_t *input)
   return tcp_test_rto_reduce_once_e2e (vm, input);
 }
 
+/*
+ * Tampering-based end-to-end cases.  Each drives a real connection through the
+ * test tampering node and asserts the connection tolerates a specific dropped
+ * segment.  Sub-cases are selected with "test tcp tamper <name>"; no argument
+ * (or "all") runs them all.
+ */
+
+/* Drop the client's first FIN and confirm the connection still tears down: the
+ * FIN is retransmitted and the client leaves ESTABLISHED. */
+static int
+tcp_test_tamper_lost_fin (vlib_main_t *vm)
+{
+  tcp_e2e_params_t params = {
+    .name = "lost_fin",
+    .client_addr = 0x0a0a0a01,
+    .server_addr = 0x0b0b0b01,
+    .client_vrf = 0,
+    .server_vrf = 2,
+    .server_port = 2239,
+    .client_port = 0, /* ephemeral: avoids PORTINUSE on rerun in one process */
+    .secret = 2238,
+  };
+  tcp_e2e_ctx_t _ctx, *ctx = &_ctx;
+  tcp_connection_t *client_tc;
+  tcp_tamper_rule_t *fin_rule;
+  u32 tries;
+  int rv = 0;
+
+  tcp_tamper_reset ();
+
+  if (!TCP_TEST_I ((tcp_e2e_setup (vm, ctx, &params) == 0), "lost_fin: e2e setup"))
+    {
+      rv = 1;
+      goto cleanup;
+    }
+  client_tc = ctx->client_tc;
+
+  if (!TCP_TEST_I ((client_tc->state == TCP_STATE_ESTABLISHED),
+		   "lost_fin: client established before close (state %U)", format_tcp_state,
+		   client_tc->state))
+    {
+      rv = 1;
+      goto cleanup;
+    }
+
+  /* Arm the drop, route the client's egress through the tamper node, close. */
+  fin_rule = tcp_tamper_drop_fin (client_tc, 1);
+  tcp_tamper_enable (client_tc);
+  session_close (ctx->client_s);
+
+  tries = 0;
+  while (fin_rule->n_dropped == 0 && ++tries < 100)
+    tcp_e2e_pump (vm, 10e-3);
+  if (!TCP_TEST_I ((fin_rule->n_dropped == 1),
+		   "lost_fin: tamper node dropped the first FIN (dropped %u, matched %u)",
+		   fin_rule->n_dropped, fin_rule->n_matched))
+    {
+      rv = 1;
+      goto cleanup;
+    }
+
+  /* The retransmit timer must re-send the FIN (matched >= 2). Initial RTO is
+   * ~1s, so allow >~3s of wheel time. */
+  tries = 0;
+  while (connected_session_index != ~0 && fin_rule->n_matched < 2 && ++tries < 400)
+    tcp_e2e_pump (vm, 10e-3);
+  if (!TCP_TEST_I ((fin_rule->n_matched >= 2),
+		   "lost_fin: FIN retransmitted after the drop (matched %u)", fin_rule->n_matched))
+    {
+      rv = 1;
+      goto cleanup;
+    }
+  if (!TCP_TEST_I ((fin_rule->n_dropped == 1),
+		   "lost_fin: only the first FIN was dropped (dropped %u of %u)",
+		   fin_rule->n_dropped, fin_rule->n_matched))
+    {
+      rv = 1;
+      goto cleanup;
+    }
+
+  /*
+   * A re-observed FIN only proves it re-entered the node; it must actually
+   * reach the peer and be acked.  Pump until the close handshake makes progress:
+   * either the client session is cleaned up, or its transport leaves FIN_WAIT_1
+   * (peer acked the retransmitted FIN).  Re-fetch the transport by session index
+   * each iteration since it may be freed once the close completes.
+   */
+  {
+    u32 csi = connected_session_index, cst = connected_session_thread;
+    u8 advanced = 0;
+
+    for (tries = 0; tries < 400; tries++)
+      {
+	session_t *s = session_get_if_valid (csi, cst);
+	tcp_connection_t *cur;
+
+	if (connected_session_index == ~0 || !s)
+	  {
+	    advanced = 1; /* fully closed and cleaned up */
+	    break;
+	  }
+	cur = (tcp_connection_t *) session_get_transport (s);
+	if (!cur || cur->state != TCP_STATE_FIN_WAIT_1)
+	  {
+	    advanced = 1; /* peer acked our FIN, moved past FIN_WAIT_1 */
+	    break;
+	  }
+	tcp_e2e_pump (vm, 10e-3);
+      }
+    if (!TCP_TEST_I ((advanced != 0),
+		     "lost_fin: close handshake progressed past FIN_WAIT_1 after retransmit"))
+      {
+	rv = 1;
+	goto cleanup;
+      }
+  }
+
+cleanup:
+  tcp_tamper_reset ();
+  tcp_e2e_teardown (vm, ctx);
+  return rv;
+}
+
+/* Drop the client's ACK of the server's FIN and confirm the teardown still
+ * completes: the server stays in LAST_ACK, retransmits its FIN, the client
+ * (in TIME_WAIT) re-acks it, and the server leaves LAST_ACK. */
+static int
+tcp_test_tamper_lost_final_ack (vlib_main_t *vm)
+{
+  tcp_e2e_params_t params = {
+    .name = "lost_ack",
+    .client_addr = 0x0c0c0c01,
+    .server_addr = 0x0d0d0d01,
+    .client_vrf = 0,
+    .server_vrf = 2,
+    .server_port = 2241,
+    .client_port = 0, /* ephemeral: rerun-safe */
+    .secret = 2240,
+  };
+  tcp_e2e_ctx_t _ctx, *ctx = &_ctx;
+  tcp_connection_t *client_tc, *server_tc;
+  tcp_tamper_rule_t *ack_rule;
+  session_t *server_s;
+  u32 tries, server_si, server_st;
+  u8 advanced = 0;
+  int rv = 0;
+
+  tcp_tamper_reset ();
+
+  if (!TCP_TEST_I ((tcp_e2e_setup (vm, ctx, &params) == 0), "lost_ack: e2e setup"))
+    {
+      rv = 1;
+      goto cleanup;
+    }
+  client_tc = ctx->client_tc;
+
+  server_si = accepted_session_index;
+  server_st = accepted_session_thread;
+  server_s = session_get_if_valid (server_si, server_st);
+  if (!TCP_TEST_I ((server_s != 0), "lost_ack: server session resolvable"))
+    {
+      rv = 1;
+      goto cleanup;
+    }
+  server_tc = (tcp_connection_t *) session_get_transport (server_s);
+
+  /*
+   * Arm the drop before closing: the client sends no data after establishment,
+   * so its first pure ack once closing is the ack of the server's FIN.  Route
+   * the client's egress through the tamper node and actively close it.
+   */
+  ack_rule = tcp_tamper_drop_pure_ack (client_tc, 1);
+  tcp_tamper_enable (client_tc);
+  session_close (ctx->client_s);
+
+  tries = 0;
+  while (ack_rule->n_dropped == 0 && ++tries < 200)
+    tcp_e2e_pump (vm, 10e-3);
+  if (!TCP_TEST_I ((ack_rule->n_dropped == 1),
+		   "lost_ack: tamper node dropped the client's final ack (dropped %u)",
+		   ack_rule->n_dropped))
+    {
+      rv = 1;
+      goto cleanup;
+    }
+
+  /* The dropped ack must have left the server waiting in LAST_ACK; otherwise a
+   * later "left LAST_ACK" is meaningless. */
+  if (!TCP_TEST_I ((server_tc->state == TCP_STATE_LAST_ACK),
+		   "lost_ack: server is in LAST_ACK after its ack was dropped (state %U)",
+		   format_tcp_state, server_tc->state))
+    {
+      rv = 1;
+      goto cleanup;
+    }
+
+  /*
+   * Recovery requires the client to re-ack the server's retransmitted FIN.
+   * Wait for that second matching ack (n_matched >= 2) AND for the server to
+   * leave LAST_ACK.  Re-fetch the server transport by index each iteration
+   * since it is freed once the teardown completes; a freed session means it
+   * left LAST_ACK, but only counts as recovery if the re-ack was also seen.
+   */
+  for (tries = 0; tries < 400; tries++)
+    {
+      session_t *s = session_get_if_valid (server_si, server_st);
+      tcp_connection_t *cur;
+
+      if (accepted_session_index == ~0 || !s)
+	{
+	  advanced = 1; /* server closed and cleaned up */
+	  break;
+	}
+      cur = (tcp_connection_t *) session_get_transport (s);
+      if ((!cur || cur->state != TCP_STATE_LAST_ACK) && ack_rule->n_matched >= 2)
+	{
+	  advanced = 1; /* left LAST_ACK after the client re-acked */
+	  break;
+	}
+      tcp_e2e_pump (vm, 10e-3);
+    }
+  if (!TCP_TEST_I ((ack_rule->n_matched >= 2),
+		   "lost_ack: client re-acked the retransmitted FIN (matched %u)",
+		   ack_rule->n_matched))
+    {
+      rv = 1;
+      goto cleanup;
+    }
+  if (!TCP_TEST_I ((advanced != 0),
+		   "lost_ack: server leaves LAST_ACK after retransmitting its FIN"))
+    {
+      rv = 1;
+      goto cleanup;
+    }
+  if (!TCP_TEST_I ((ack_rule->n_dropped == 1),
+		   "lost_ack: only the first ack was dropped (dropped %u of %u)",
+		   ack_rule->n_dropped, ack_rule->n_matched))
+    {
+      rv = 1;
+      goto cleanup;
+    }
+
+cleanup:
+  tcp_tamper_reset ();
+  tcp_e2e_teardown (vm, ctx);
+  return rv;
+}
+
+static int
+tcp_test_tamper (vlib_main_t *vm, unformat_input_t *input)
+{
+  int res = 0, ran = 0;
+
+  if (unformat_check_input (input) == UNFORMAT_END_OF_INPUT)
+    {
+      if ((res = tcp_test_tamper_lost_fin (vm)))
+	return res;
+      return tcp_test_tamper_lost_final_ack (vm);
+    }
+
+  while (unformat_check_input (input) != UNFORMAT_END_OF_INPUT)
+    {
+      if (unformat (input, "fin"))
+	{
+	  ran = 1;
+	  if ((res = tcp_test_tamper_lost_fin (vm)))
+	    return res;
+	}
+      else if (unformat (input, "lost-ack"))
+	{
+	  ran = 1;
+	  if ((res = tcp_test_tamper_lost_final_ack (vm)))
+	    return res;
+	}
+      else if (unformat (input, "all"))
+	{
+	  ran = 1;
+	  if ((res = tcp_test_tamper_lost_fin (vm)))
+	    return res;
+	  if ((res = tcp_test_tamper_lost_final_ack (vm)))
+	    return res;
+	}
+      else
+	{
+	  vlib_cli_output (vm, "unknown tamper case: '%U'", format_unformat_error, input);
+	  return -1;
+	}
+    }
+
+  if (!ran)
+    {
+      if ((res = tcp_test_tamper_lost_fin (vm)))
+	return res;
+      return tcp_test_tamper_lost_final_ack (vm);
+    }
+  return res;
+}
+
 static int
 tcp_test_delivery (vlib_main_t * vm, unformat_input_t * input)
 {
@@ -3549,6 +3849,10 @@ tcp_test (vlib_main_t * vm,
 	{
 	  res = tcp_test_bt (vm, input);
 	}
+      else if (unformat (input, "tamper"))
+	{
+	  res = tcp_test_tamper (vm, input);
+	}
       else if (unformat (input, "all"))
 	{
 	  if ((res = tcp_test_sack (vm, input)))
@@ -3564,6 +3868,8 @@ tcp_test (vlib_main_t * vm,
 	  if ((res = tcp_test_cubic (vm, input)))
 	    goto done;
 	  if ((res = tcp_test_bt (vm, input)))
+	    goto done;
+	  if ((res = tcp_test_tamper (vm, input)))
 	    goto done;
 	}
       else
