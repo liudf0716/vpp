@@ -161,6 +161,165 @@ tcp_test_sack_reordering (void)
   return 0;
 }
 
+/* Drive one out-of-order reorder observation and return the learned estimate.
+ * Establishes the sack frontier at snd_nxt, then sacks a single delayed mss
+ * whose start is 'distance' bytes below the frontier. */
+static u32
+tcp_test_reorder_observe (tcp_connection_t *tc, u16 mss, u32 snd_nxt, u32 distance,
+			  u32 initial_reorder)
+{
+  sack_scoreboard_t *sb = &tc->sack_sb;
+  sack_block_t block;
+  u32 reorder;
+
+  clib_memset (tc, 0, sizeof (*tc));
+  tc->snd_nxt = snd_nxt;
+  tc->snd_mss = mss;
+  tc->rcv_opts.flags = TCP_OPTS_FLAG_SACK;
+  scoreboard_init (sb);
+  sb->reorder = initial_reorder;
+  sb->rescue_rxt = tc->snd_una - 1;
+
+  /* Establish the frontier at snd_nxt. */
+  block.start = snd_nxt - mss;
+  block.end = snd_nxt;
+  vec_add1 (tc->rcv_opts.sacks, block);
+  tc->rcv_opts.n_sack_blocks = 1;
+  tcp_rcv_sacks (tc, tc->snd_una);
+
+  /* Sack a delayed segment 'distance' bytes below the frontier. */
+  vec_reset_length (tc->rcv_opts.sacks);
+  block.start = snd_nxt - distance;
+  block.end = block.start + mss;
+  vec_add1 (tc->rcv_opts.sacks, block);
+  tc->rcv_opts.n_sack_blocks = 1;
+  tcp_rcv_sacks (tc, tc->snd_una);
+
+  reorder = sb->reorder;
+
+  scoreboard_clear (sb);
+  pool_free (sb->holes);
+  vec_free (tc->rcv_opts.sacks);
+  return reorder;
+}
+
+/* The reorder estimate must equal ceil(reordering_distance / mss) exactly,
+ * neither under- nor over-estimating, and must track the maximum observed
+ * distance rather than summing successive observations. */
+static int
+tcp_test_sack_reorder_accuracy (void)
+{
+  tcp_connection_t _tc, *tc = &_tc;
+  sack_scoreboard_t *sb = &tc->sack_sb;
+  sack_block_t block;
+  const u16 mss = 150;
+  const u32 snd_nxt = 60000;
+  u32 dist_mss;
+  int ok = 1;
+
+  /* Accuracy sweep: for each whole-segment distance, test an exact multiple,
+   * one byte over (must round the partial segment up) and one byte under (must
+   * not round an almost-full extra segment up). Start above the floor
+   * (TCP_DUPACK_THRESHOLD) so every point exercises the ceil rounding rather
+   * than the clamp, and keep every distance >= mss so the delayed segment is a
+   * valid block below the frontier (end <= snd_nxt). */
+  for (dist_mss = TCP_DUPACK_THRESHOLD + 1; dist_mss <= 40 && ok; dist_mss++)
+    {
+      u32 s;
+      const int offs[] = { 0, 1, -1 };
+
+      for (s = 0; s < ARRAY_LEN (offs) && ok; s++)
+	{
+	  u32 distance = dist_mss * mss + offs[s];
+	  u32 expected = (distance + mss - 1) / mss;
+	  u32 got = tcp_test_reorder_observe (tc, mss, snd_nxt, distance, TCP_DUPACK_THRESHOLD);
+
+	  ok = TCP_TEST_I ((got == expected),
+			   "reorder accuracy: distance %u (mss %u) expected %u, got %u", distance,
+			   mss, expected, got);
+	}
+    }
+  if (!ok)
+    return 1;
+
+  /* Floor: a reordering shorter than the dupack threshold must clamp to
+   * TCP_DUPACK_THRESHOLD, not report the (smaller) measured distance. Distances
+   * stay >= mss so the block is still a valid observation below the frontier. */
+  {
+    u32 floor_dists[] = { mss + 1, 2 * mss };
+
+    for (dist_mss = 0; dist_mss < ARRAY_LEN (floor_dists) && ok; dist_mss++)
+      {
+	u32 distance = floor_dists[dist_mss];
+	u32 got = tcp_test_reorder_observe (tc, mss, snd_nxt, distance, TCP_DUPACK_THRESHOLD);
+
+	ok = TCP_TEST_I ((got == TCP_DUPACK_THRESHOLD),
+			 "reorder floor: distance %u clamps to %u, got %u", distance,
+			 TCP_DUPACK_THRESHOLD, got);
+      }
+  }
+  if (!ok)
+    return 1;
+
+  /* Max-semantics: a larger observation raises the estimate; a subsequent
+   * smaller one neither lowers it (under-estimate) nor adds to it
+   * (over-estimate). */
+  {
+    u32 big = 10, small = 4, got;
+
+    clib_memset (tc, 0, sizeof (*tc));
+    tc->snd_nxt = snd_nxt;
+    tc->snd_mss = mss;
+    tc->rcv_opts.flags = TCP_OPTS_FLAG_SACK;
+    scoreboard_init (sb);
+    sb->rescue_rxt = tc->snd_una - 1;
+
+    block.start = snd_nxt - mss;
+    block.end = snd_nxt;
+    vec_add1 (tc->rcv_opts.sacks, block);
+    tc->rcv_opts.n_sack_blocks = 1;
+    tcp_rcv_sacks (tc, tc->snd_una);
+
+    /* Large reorder first. */
+    vec_reset_length (tc->rcv_opts.sacks);
+    block.start = snd_nxt - big * mss;
+    block.end = block.start + mss;
+    vec_add1 (tc->rcv_opts.sacks, block);
+    tc->rcv_opts.n_sack_blocks = 1;
+    tcp_rcv_sacks (tc, tc->snd_una);
+    ok = TCP_TEST_I ((sb->reorder == big), "reorder max: large observation sets %u, got %u", big,
+		     sb->reorder);
+
+    /* Smaller reorder after: must stay at big, not drop to small, not sum. */
+    if (ok)
+      {
+	vec_reset_length (tc->rcv_opts.sacks);
+	block.start = snd_nxt - small * mss;
+	block.end = block.start + mss;
+	vec_add1 (tc->rcv_opts.sacks, block);
+	tc->rcv_opts.n_sack_blocks = 1;
+	tcp_rcv_sacks (tc, tc->snd_una);
+	ok = TCP_TEST_I ((sb->reorder == big), "reorder max: smaller observation keeps %u, got %u",
+			 big, sb->reorder);
+      }
+
+    scoreboard_clear (sb);
+    pool_free (sb->holes);
+    vec_free (tc->rcv_opts.sacks);
+    if (!ok)
+      return 1;
+
+    /* Reverse order grows the estimate to the larger observation. */
+    got = tcp_test_reorder_observe (tc, mss, snd_nxt, big * mss, small);
+    ok = TCP_TEST_I ((got == big), "reorder max: grows past a smaller prior estimate to %u, got %u",
+		     big, got);
+    if (!ok)
+      return 1;
+  }
+
+  return 0;
+}
+
 static int
 tcp_test_sack_rx (vlib_main_t * vm, unformat_input_t * input)
 {
@@ -179,6 +338,9 @@ tcp_test_sack_rx (vlib_main_t * vm, unformat_input_t * input)
     }
 
   if (tcp_test_sack_reordering ())
+    return 1;
+
+  if (tcp_test_sack_reorder_accuracy ())
     return 1;
 
   clib_memset (tc, 0, sizeof (*tc));
@@ -3243,6 +3405,66 @@ tcp_test_bt (vlib_main_t * vm, unformat_input_t * input)
   bts = pool_elt_at_index (bt->samples, bt->tail);
   TCP_TEST (bts->min_seq == 250 && bts->max_seq == 300, "tail rxt merge should cover [250:300]");
   TCP_TEST ((bts->flags & TCP_BTS_IS_RXT), "tail rxt should be marked");
+
+  /*
+   * 15) a mid-sample retransmit preserves the original tx metadata on the
+   * unretransmitted remainder, and re-retransmitting a retransmit marks it
+   * as a lost retransmit.
+   */
+  vec_free (tc->rcv_opts.sacks);
+  tcp_bt_cleanup (tc);
+  memset (tc, 0, sizeof (*tc));
+  tcp_bt_init (tc);
+  bt = tc->bt;
+  memset (rs, 0, sizeof (*rs));
+
+  /* One 300-byte burst at time 40, delivered baseline set by the tx. */
+  tcp_test_set_time (thread_index, 40);
+  tcp_bt_track_tx (tc, 300);
+  tc->snd_nxt += 300;
+  {
+    tcp_bt_sample_t *rem, *mid;
+
+    /* Retransmit the middle [100:200] at time 41, splitting into three. */
+    tcp_test_set_time (thread_index, 41);
+    tcp_bt_track_rxt (tc, 100, 200);
+    TCP_TEST (tcp_bt_is_sane (bt), "tracker should be sane after mid rxt");
+    TCP_TEST (pool_elts (bt->samples) == 3, "mid rxt should split into 3 is %u",
+	      pool_elts (bt->samples));
+
+    /* head [0:100] keeps the original tx time */
+    bts = pool_elt_at_index (bt->samples, bt->head);
+    TCP_TEST (bts->min_seq == 0 && bts->max_seq == 100, "split head [0:100]");
+    TCP_TEST (bts->tx_time == 40 && !(bts->flags & TCP_BTS_IS_RXT),
+	      "split head keeps original tx time and is not rxt");
+
+    /* middle [100:200] is the retransmit at time 41 */
+    mid = pool_elt_at_index (bt->samples, bts->next);
+    TCP_TEST (mid->min_seq == 100 && mid->max_seq == 200, "split middle [100:200]");
+    TCP_TEST (mid->tx_time == 41 && (mid->flags & TCP_BTS_IS_RXT),
+	      "split middle carries the rxt time and rxt flag");
+    TCP_TEST (!(mid->flags & TCP_BTS_IS_RXT_LOST), "first rxt of the middle is not yet a lost rxt");
+
+    /* remainder [200:300] must keep the ORIGINAL tx metadata, not the rxt's */
+    rem = pool_elt_at_index (bt->samples, mid->next);
+    TCP_TEST (rem->min_seq == 200 && rem->max_seq == 300, "split remainder [200:300]");
+    TCP_TEST (rem->tx_time == 40 && rem->first_tx_time == mid->first_tx_time,
+	      "remainder preserves original tx time %.0f is %.0f", 40.0, rem->tx_time);
+    TCP_TEST (!(rem->flags & TCP_BTS_IS_RXT), "remainder is not a retransmit");
+
+    /* Retransmit the middle again at time 42: an already-rxt sample being
+     * retransmitted must be flagged as a lost retransmit. */
+    tcp_test_set_time (thread_index, 42);
+    tcp_bt_track_rxt (tc, 100, 200);
+    TCP_TEST (tcp_bt_is_sane (bt), "tracker should be sane after re-rxt");
+    bts = pool_elt_at_index (bt->samples, bt->head);
+    mid = pool_elt_at_index (bt->samples, bts->next);
+    TCP_TEST (mid->min_seq == 100 && mid->max_seq == 200, "re-rxt middle still [100:200]");
+    TCP_TEST (mid->tx_time == 42 && (mid->flags & TCP_BTS_IS_RXT),
+	      "re-rxt carries the newer rxt time");
+    TCP_TEST ((mid->flags & TCP_BTS_IS_RXT_LOST),
+	      "re-retransmitted sample is marked as a lost retransmit");
+  }
 
   /*
    * 14) app-limited detection uses the session tx fifo and in-flight data
